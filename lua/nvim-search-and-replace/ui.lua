@@ -9,6 +9,7 @@ local state = {
   replace_text = "",
   results = {},
   selected_idx = 1,
+  selected_items = {},  -- Set of selected indices for multi-selection
   help_shown = true,
   
   -- Window and buffer handles
@@ -193,7 +194,11 @@ local function update_results_list()
   local cwd = vim.loop.cwd()
   local lines = {}
   for i, result in ipairs(state.results) do
+    local is_selected = state.selected_items[i] ~= nil
     local marker = (i == state.selected_idx) and "▶ " or "  "
+    if is_selected then
+      marker = (i == state.selected_idx) and "▶✓" or " ✓"
+    end
     -- Convert to relative path
     local rel_path = result.filename
     if rel_path:sub(1, #cwd) == cwd then
@@ -219,11 +224,18 @@ local function update_results_list()
   -- Set back to non-modifiable
   vim.api.nvim_buf_set_option(state.results_buf, "modifiable", false)
   
-  -- Highlight selected line
+  -- Highlight selected line and marked items
   local ns = vim.api.nvim_create_namespace("nvim_search_and_replace_selection")
   vim.api.nvim_buf_clear_namespace(state.results_buf, ns, 0, -1)
   if state.selected_idx > 0 and state.selected_idx <= #state.results then
     vim.api.nvim_buf_add_highlight(state.results_buf, ns, "Visual", state.selected_idx - 1, 0, -1)
+  end
+  
+  -- Highlight marked items with a different color
+  for idx, _ in pairs(state.selected_items) do
+    if idx ~= state.selected_idx then
+      vim.api.nvim_buf_add_highlight(state.results_buf, ns, "CursorLine", idx - 1, 0, -1)
+    end
   end
   
   -- Add syntax highlighting for results
@@ -265,6 +277,7 @@ local function do_search()
   state.search_text = vim.api.nvim_buf_get_lines(state.search_buf, 0, -1, false)[1] or ""
   state.results = run_ripgrep(state.search_text, {literal = true})
   state.selected_idx = 1
+  state.selected_items = {}  -- Clear selection on new search
   update_results_list()
   update_preview()
   
@@ -341,7 +354,7 @@ local function create_ui()
     col = start_col,
     style = "minimal",
     border = "rounded",
-    title = " Results (j/k navigate, <CR> replace selected, <C-a> all, u undo) ",
+    title = " Results (j/k: move, Tab: select, S-Tab: unselect, <CR>: replace, <C-a>: all) ",
     title_pos = "center",
   })
   
@@ -362,7 +375,7 @@ local function create_ui()
   vim.api.nvim_win_set_option(state.search_win, "wrap", false)
   vim.api.nvim_win_set_option(state.replace_win, "wrap", false)
   vim.api.nvim_win_set_option(state.results_win, "cursorline", true)
-  vim.api.nvim_win_set_option(state.results_win, "wrap", true)
+  vim.api.nvim_win_set_option(state.results_win, "wrap", false)
   vim.api.nvim_win_set_option(state.preview_win, "wrap", true)
 end
 
@@ -418,8 +431,8 @@ local function setup_keymaps()
     end)
   end
   
-  -- Tab/Shift-Tab navigation only between left-side windows
-  for _, buf in ipairs({state.search_buf, state.replace_buf, state.results_buf}) do
+  -- Tab/Shift-Tab for multi-selection in results buffer only
+  for _, buf in ipairs({state.search_buf, state.replace_buf}) do
     map(buf, {"i", "n"}, "<Tab>", function()
       if vim.api.nvim_get_current_win() == state.search_win then
         vim.api.nvim_set_current_win(state.replace_win)
@@ -427,9 +440,6 @@ local function setup_keymaps()
       elseif vim.api.nvim_get_current_win() == state.replace_win then
         vim.api.nvim_set_current_win(state.results_win)
         vim.cmd("stopinsert")
-      elseif vim.api.nvim_get_current_win() == state.results_win then
-        vim.api.nvim_set_current_win(state.search_win)
-        vim.cmd("startinsert!")
       end
     end)
     
@@ -440,12 +450,38 @@ local function setup_keymaps()
       elseif vim.api.nvim_get_current_win() == state.replace_win then
         vim.api.nvim_set_current_win(state.search_win)
         vim.cmd("startinsert!")
-      elseif vim.api.nvim_get_current_win() == state.results_win then
-        vim.api.nvim_set_current_win(state.replace_win)
-        vim.cmd("startinsert!")
       end
     end)
   end
+  
+  -- Results buffer: Tab to select, Shift-Tab to unselect
+  map(state.results_buf, "n", "<Tab>", function()
+    if state.selected_idx > 0 and state.selected_idx <= #state.results then
+      state.selected_items[state.selected_idx] = true
+      update_results_list()
+      -- Move to next item
+      if state.selected_idx < #state.results then
+        state.selected_idx = state.selected_idx + 1
+        update_results_list()
+        update_preview()
+        vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
+      end
+    end
+  end)
+  
+  map(state.results_buf, "n", "<S-Tab>", function()
+    if state.selected_idx > 0 and state.selected_idx <= #state.results then
+      state.selected_items[state.selected_idx] = nil
+      update_results_list()
+      -- Move to previous item
+      if state.selected_idx > 1 then
+        state.selected_idx = state.selected_idx - 1
+        update_results_list()
+        update_preview()
+        vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
+      end
+    end
+  end)
   
   -- Search buffer keymaps
   map(state.search_buf, {"i", "n"}, "<Down>", function()
@@ -470,6 +506,8 @@ local function setup_keymaps()
       state.selected_idx = state.selected_idx + 1
       update_results_list()
       update_preview()
+      -- Scroll to keep selection visible
+      vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
     end
   end)
   
@@ -478,6 +516,8 @@ local function setup_keymaps()
       state.selected_idx = state.selected_idx + 1
       update_results_list()
       update_preview()
+      -- Scroll to keep selection visible
+      vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
     end
   end)
   
@@ -486,6 +526,8 @@ local function setup_keymaps()
       state.selected_idx = state.selected_idx - 1
       update_results_list()
       update_preview()
+      -- Scroll to keep selection visible
+      vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
     end
   end)
   
@@ -494,13 +536,28 @@ local function setup_keymaps()
       state.selected_idx = state.selected_idx - 1
       update_results_list()
       update_preview()
+      -- Scroll to keep selection visible
+      vim.api.nvim_win_set_cursor(state.results_win, {state.selected_idx, 0})
     end
   end)
   
   map(state.results_buf, "n", "<CR>", function()
-    if state.results[state.selected_idx] then
+    -- If items are marked, replace in all marked items
+    local items_to_replace = {}
+    if next(state.selected_items) then
+      for idx, _ in pairs(state.selected_items) do
+        table.insert(items_to_replace, state.results[idx])
+      end
+    else
+      -- Otherwise, just replace the current item
+      if state.results[state.selected_idx] then
+        items_to_replace = {state.results[state.selected_idx]}
+      end
+    end
+    
+    if #items_to_replace > 0 then
       state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-      local summary = replacer.apply({state.results[state.selected_idx]}, state.search_text, state.replace_text, {literal = true})
+      local summary = replacer.apply(items_to_replace, state.search_text, state.replace_text, {literal = true})
       replacer.notify_summary(summary)
       -- Refresh results
       do_search()
@@ -559,15 +616,18 @@ local function setup_keymaps()
         "Type in Search field to find matches",
         "",
         "Navigation:",
-        "  <Tab> / <S-Tab>         - Cycle through left panels",
-        "  <C-j> / <C-k>           - Move between fields",
-        "  j/k or ↑/↓              - Navigate results",
+        "  <C-j> / <C-k>           - Move between input fields and results",
+        "  j/k or ↑/↓              - Navigate results list",
+        "",
+        "Selection:",
+        "  <Tab>                   - Mark/select current item",
+        "  <S-Tab>                 - Unmark/unselect current item",
         "",
         "Actions:",
-        "  <CR>       - Replace selected match",
-        "  <C-a>      - Replace all matches",
-        "  u          - Undo last replacement",
-        "  <Esc> / q  - Close (from normal mode)",
+        "  <CR>                    - Replace current (or all marked items)",
+        "  <C-a>                   - Replace ALL matches",
+        "  u                       - Undo last replacement",
+        "  <Esc> / q               - Close",
       })
       vim.api.nvim_buf_set_option(state.results_buf, "modifiable", false)
     end
@@ -579,6 +639,7 @@ function M.open(opts)
   state.search_text = opts.search or ""
   state.replace_text = opts.replace or ""
   state.help_shown = true
+  state.selected_items = {}  -- Reset selection
   
   create_ui()
   setup_keymaps()
