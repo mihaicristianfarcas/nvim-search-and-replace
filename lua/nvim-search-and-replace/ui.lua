@@ -139,6 +139,12 @@ local function update_preview()
   
   vim.api.nvim_buf_set_lines(state.preview_buf, 0, -1, false, preview_lines)
   
+  -- Detect filetype and enable syntax highlighting
+  local filetype = vim.filetype.match({ filename = result.filename })
+  if filetype then
+    vim.api.nvim_buf_set_option(state.preview_buf, "filetype", filetype)
+  end
+  
   -- Set back to non-modifiable
   vim.api.nvim_buf_set_option(state.preview_buf, "modifiable", false)
   
