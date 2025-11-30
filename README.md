@@ -30,10 +30,10 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 ```lua
 {
-  "mihaicristianfarcas/nvim-replace-and-replace",
+  "mihaicristianfarcas/nvim-search-and-replace",
   cmd = "SearchAndReplaceOpen",
   keys = {
-    { "<leader>sr", "<cmd>SearchAndReplaceOpen<cr>", desc = "Search and Replace" },
+    { "<leader>sar", "<cmd>SearchAndReplaceOpen<cr>", desc = "[S]earch [A]nd [R]eplace" },
   },
   opts = {
     -- Optional configuration
@@ -48,9 +48,9 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 ```lua
 use {
-  "mihaicristianfarcas/nvim-replace-and-replace",
+  "mihaicristianfarcas/nvim-search-and-replace",
   config = function()
-    require("nvim_replace_and_replace").setup({
+    require("nvim-search-and-replace").setup({
       rg_binary = "rg",
       literal = true,
       smart_case = true,
@@ -63,7 +63,7 @@ use {
 
 ### Opening the Interface
 
-Execute the following command to open the replace and replace interface:
+Execute the following command to open the search and replace interface:
 
 ```vim
 :SearchAndReplaceOpen
@@ -75,9 +75,9 @@ The UI consists of four main panes:
 
 ```
 ┌─ Search ────────────────┐  ┌─ Preview ──────────────┐
-│ replace_term             │  │ ╔═══ src/file.lua ═══  │
+│ search_term             │  │ ╔═══ src/file.lua ═══  │
 ├─ Replace ───────────────┤  │                        │
-│ replacement_text        │  │  BEFORE: replace_term   │
+│ replacement_text        │  │  BEFORE: search_term   │
 ├─ Results ───────────────┤  │  AFTER:  replacement   │
 │ ▶ src/file.lua:10       │  │                        │
 │   lib/util.lua:25       │  └────────────────────────┘
@@ -98,10 +98,9 @@ The UI consists of four main panes:
 #### Navigation
 | Key | Mode | Action |
 |-----|------|--------|
-| `Tab` | Normal/Insert | Cycle forward through fields (search → replace → results) |
-| `Shift-Tab` | Normal/Insert | Cycle backward through fields |
-| `Ctrl-j` | Normal/Insert | Move to next field |
-| `Ctrl-k` | Normal/Insert | Move to previous field |
+| `Tab` | Normal | Select file(s) |
+| `Shift-Tab` | Normal | Unselect file(s) |
+| `Ctrl-j` | Normal/Insert | Cycle through fields (search → replace → results) |
 | `j` / `k` | Normal | Navigate results list |
 | `↑` / `↓` | Normal | Navigate results list |
 
@@ -198,7 +197,7 @@ Contributions are welcome. Please ensure:
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT
 
 ## Credits
 
