@@ -1,6 +1,7 @@
 local M = {}
 
 local history = {}
+local redo_stack = {}
 
 local function sort_descending(entries)
   table.sort(entries, function(a, b)
@@ -146,6 +147,8 @@ function M.apply(entries, search, replace_text, opts)
 
   if summary.applied > 0 then
     table.insert(history, { files = op_files, search = search, replace = replace_text, timestamp = os.time() })
+    -- Clear redo stack when new operation is performed
+    redo_stack = {}
   end
 
   return summary
@@ -169,10 +172,24 @@ function M.notify_summary(summary)
 end
 
 function M.undo_last()
+  if #history == 0 then
+    vim.notify("No replace operations to undo.", vim.log.levels.INFO)
+    return
+  end
+
   local op = table.remove(history)
   if not op then
     vim.notify("No replace operations to undo.", vim.log.levels.INFO)
     return
+  end
+
+  -- Save current state before restoring for redo
+  local current_state = {}
+  for filename, _ in pairs(op.files or {}) do
+    local ok, lines = pcall(vim.fn.readfile, filename)
+    if ok then
+      current_state[filename] = lines
+    end
   end
 
   local restored, failed = 0, {}
@@ -185,11 +202,85 @@ function M.undo_last()
     end
   end
 
+  -- Add to redo stack with current state and operation info
+  table.insert(redo_stack, {
+    files = current_state,
+    search = op.search,
+    replace = op.replace,
+    timestamp = op.timestamp
+  })
+
   local msg = string.format("Undid replace (%d file(s) restored).", restored)
+  if #history > 0 then
+    msg = msg .. string.format(" %d more undo(s) available.", #history)
+  end
+  if #redo_stack > 0 then
+    msg = msg .. string.format(" %d redo(s) available.", #redo_stack)
+  end
   if #failed > 0 then
     msg = msg .. " Failed: " .. table.concat(failed, "; ")
   end
   vim.notify(msg, #failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+end
+
+function M.redo_last()
+  if #redo_stack == 0 then
+    vim.notify("No replace operations to redo.", vim.log.levels.INFO)
+    return
+  end
+
+  local op = table.remove(redo_stack)
+  if not op then
+    vim.notify("No replace operations to redo.", vim.log.levels.INFO)
+    return
+  end
+
+  -- Save current state before restoring for undo
+  local current_state = {}
+  for filename, _ in pairs(op.files or {}) do
+    local ok, lines = pcall(vim.fn.readfile, filename)
+    if ok then
+      current_state[filename] = lines
+    end
+  end
+
+  local restored, failed = 0, {}
+  for filename, lines in pairs(op.files or {}) do
+    local ok, err = pcall(vim.fn.writefile, lines, filename)
+    if ok then
+      restored = restored + 1
+    else
+      table.insert(failed, string.format("%s (%s)", filename, err))
+    end
+  end
+
+  -- Add back to history
+  table.insert(history, {
+    files = current_state,
+    search = op.search,
+    replace = op.replace,
+    timestamp = op.timestamp
+  })
+
+  local msg = string.format("Redid replace (%d file(s) restored).", restored)
+  if #redo_stack > 0 then
+    msg = msg .. string.format(" %d more redo(s) available.", #redo_stack)
+  end
+  if #history > 0 then
+    msg = msg .. string.format(" %d undo(s) available.", #history)
+  end
+  if #failed > 0 then
+    msg = msg .. " Failed: " .. table.concat(failed, "; ")
+  end
+  vim.notify(msg, #failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+end
+
+function M.get_history_count()
+  return #history
+end
+
+function M.get_redo_count()
+  return #redo_stack
 end
 
 return M

@@ -19,3 +19,10 @@ vim.api.nvim_create_user_command("SearchAndReplaceUndo", function()
 end, {
   desc = "Undo the last replacement operation",
 })
+
+-- Command to redo the last replacement
+vim.api.nvim_create_user_command("SearchAndReplaceRedo", function()
+  search_and_replace.redo_last()
+end, {
+  desc = "Redo the last replacement operation",
+})

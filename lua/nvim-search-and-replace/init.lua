@@ -27,4 +27,9 @@ function M.undo_last()
   return require("nvim-search-and-replace.replace").undo_last()
 end
 
+-- Redo the last replacement operation
+function M.redo_last()
+  return require("nvim-search-and-replace.replace").redo_last()
+end
+
 return M

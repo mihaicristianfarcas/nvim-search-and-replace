@@ -303,6 +303,11 @@ local function do_search()
 	state.selected_items = {} -- Clear selection on new search
 	update_results_list()
 	update_preview()
+	
+	-- Reset cursor to top of results
+	if state.results_win and vim.api.nvim_win_is_valid(state.results_win) and #state.results > 0 then
+		vim.api.nvim_win_set_cursor(state.results_win, {1, 0})
+	end
 
 	-- Clear help text once user starts searching
 	state.help_shown = false
@@ -420,9 +425,21 @@ local function setup_keymaps()
 			do_search()
 		end)
 
+		-- Redo with Ctrl+r
+		map(buf, "n", "<C-r>", function()
+			replacer.redo_last()
+			do_search()
+		end)
+
 		-- Also keep Ctrl+z for undo
 		map(buf, { "n", "i" }, "<C-z>", function()
 			replacer.undo_last()
+			do_search()
+		end)
+
+		-- Ctrl+Shift+z for redo
+		map(buf, { "n", "i" }, "<C-S-z>", function()
+			replacer.redo_last()
 			do_search()
 		end)
 
@@ -480,29 +497,33 @@ local function setup_keymaps()
 	-- Results buffer: Tab to select, Shift-Tab to unselect
 	map(state.results_buf, "n", "<Tab>", function()
 		if state.selected_idx > 0 and state.selected_idx <= #state.results then
+			-- Mark current item
 			state.selected_items[state.selected_idx] = true
-			update_results_list()
-			-- Move to next item
-			if state.selected_idx < #state.results then
-				state.selected_idx = state.selected_idx + 1
-				update_results_list()
-				update_preview()
-				vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
+			-- Move to next item (circular)
+			state.selected_idx = state.selected_idx + 1
+			if state.selected_idx > #state.results then
+				state.selected_idx = 1
 			end
+			-- Update UI once
+			update_results_list()
+			update_preview()
+			vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
 		end
 	end)
 
 	map(state.results_buf, "n", "<S-Tab>", function()
 		if state.selected_idx > 0 and state.selected_idx <= #state.results then
+			-- Unmark current item
 			state.selected_items[state.selected_idx] = nil
-			update_results_list()
-			-- Move to previous item
-			if state.selected_idx > 1 then
-				state.selected_idx = state.selected_idx - 1
-				update_results_list()
-				update_preview()
-				vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
+			-- Move to previous item (circular)
+			state.selected_idx = state.selected_idx - 1
+			if state.selected_idx < 1 then
+				state.selected_idx = #state.results
 			end
+			-- Update UI once
+			update_results_list()
+			update_preview()
+			vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
 		end
 	end)
 
@@ -661,7 +682,8 @@ local function setup_keymaps()
 				"Actions:",
 				"  <CR>                    - Replace current (or all marked items)",
 				"  <C-a>                   - Replace ALL matches",
-				"  u                       - Undo last replacement",
+				"  u / <C-z>               - Undo last replacement",
+				"  <C-r> / <C-S-z>         - Redo last replacement",
 				"  <Esc> / q               - Close",
 			})
 			vim.api.nvim_buf_set_option(state.results_buf, "modifiable", false)
