@@ -156,11 +156,11 @@ require("nvim_search_and_replace").setup({
 
 ## How It Works
 
-1. **Search Phase**: Uses `ripgrep` to quickly find all matches across the project
-2. **Preview Phase**: Displays matched lines with context and shows how replacements will appear
-3. **Validation Phase**: Before writing, validates that the text at each location still matches the replace term
-4. **Replacement Phase**: Writes changes to files only when validation passes
-5. **History Phase**: Stores previous file content for undo functionality
+1. **Search**: Uses `ripgrep` to quickly find all matches across the project
+2. **Preview**: Displays matched lines with context and shows how replacements will appear
+3. **Validation**: Before writing, validates that the text at each location still matches the replace term
+4. **Replacement**: Writes changes to files only when validation passes
+5. **History**: Stores previous file content for undo functionality
 
 ### Safety Features
 
