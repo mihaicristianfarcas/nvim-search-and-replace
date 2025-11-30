@@ -2,6 +2,9 @@
 
 A Neovim plugin for performing project-wide search and replace operations with a visual interface and live preview.
 
+## Preview
+
+![Preview](assets/preview.gif)
 ## Overview
 
 `nvim-search-and-replace` provides a custom split-pane UI for finding and replacing text across your entire project. It integrates with `ripgrep` for fast searching and offers a safe, visual workflow with live previews before making changes.
@@ -27,7 +30,7 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 ```lua
 {
-  "mihaicristianfarcas/nvim-search-and-replace",
+  "mihaicristianfarcas/nvim-replace-and-replace",
   cmd = "SearchAndReplaceOpen",
   keys = {
     { "<leader>sr", "<cmd>SearchAndReplaceOpen<cr>", desc = "Search and Replace" },
@@ -45,9 +48,9 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 ```lua
 use {
-  "mihaicristianfarcas/nvim-search-and-replace",
+  "mihaicristianfarcas/nvim-replace-and-replace",
   config = function()
-    require("nvim_search_and_replace").setup({
+    require("nvim_replace_and_replace").setup({
       rg_binary = "rg",
       literal = true,
       smart_case = true,
@@ -60,7 +63,7 @@ use {
 
 ### Opening the Interface
 
-Execute the following command to open the search and replace interface:
+Execute the following command to open the replace and replace interface:
 
 ```vim
 :SearchAndReplaceOpen
@@ -72,9 +75,9 @@ The UI consists of four main panes:
 
 ```
 ┌─ Search ────────────────┐  ┌─ Preview ──────────────┐
-│ search_term             │  │ ╔═══ src/file.lua ═══  │
+│ replace_term             │  │ ╔═══ src/file.lua ═══  │
 ├─ Replace ───────────────┤  │                        │
-│ replacement_text        │  │  BEFORE: search_term   │
+│ replacement_text        │  │  BEFORE: replace_term   │
 ├─ Results ───────────────┤  │  AFTER:  replacement   │
 │ ▶ src/file.lua:10       │  │                        │
 │   lib/util.lua:25       │  └────────────────────────┘
@@ -156,14 +159,14 @@ require("nvim_search_and_replace").setup({
 
 1. **Search Phase**: Uses `ripgrep` to quickly find all matches across the project
 2. **Preview Phase**: Displays matched lines with context and shows how replacements will appear
-3. **Validation Phase**: Before writing, validates that the text at each location still matches the search term
+3. **Validation Phase**: Before writing, validates that the text at each location still matches the replace term
 4. **Replacement Phase**: Writes changes to files only when validation passes
 5. **History Phase**: Stores previous file content for undo functionality
 
 ### Safety Features
 
 - **Exact Match Validation**: Only replaces text that exactly matches at the specified location
-- **Skip Mismatches**: If text has changed since the search, the replacement is skipped
+- **Skip Mismatches**: If text has changed since the replace, the replacement is skipped
 - **Detailed Reporting**: Shows which replacements succeeded and which were skipped
 - **Undo Support**: Maintains history to revert changes if needed
 
@@ -177,8 +180,8 @@ require("nvim_search_and_replace").setup({
 
 ### Matches are skipped during replacement
 
-This is expected behavior. The plugin validates that the text at each match location exactly matches your search term before replacing. Mismatches can occur due to:
-- Text being modified since the initial search
+This is expected behavior. The plugin validates that the text at each match location exactly matches your replace term before replacing. Mismatches can occur due to:
+- Text being modified since the initial replace
 - Partial matches at the specified column position
 - Case sensitivity differences
 
@@ -200,5 +203,5 @@ MIT License - see LICENSE file for details
 ## Credits
 
 Built with:
-- [ripgrep](https://github.com/BurntSushi/ripgrep) for fast text searching
+- [ripgrep](https://github.com/BurntSushi/ripgrep) for fast text replaceing
 - Neovim's floating window API for the custom UI
