@@ -443,30 +443,29 @@ local function setup_keymaps()
 			do_search()
 		end)
 
-		-- Ctrl+j/k for navigation between windows
+		-- Ctrl+j for navigation between windows (circular)
 		map(buf, { "n", "i" }, "<C-j>", function()
-			if vim.api.nvim_get_current_win() == state.search_win then
-				vim.api.nvim_set_current_win(state.replace_win)
-				vim.cmd("startinsert!")
-			elseif vim.api.nvim_get_current_win() == state.replace_win then
-				vim.api.nvim_set_current_win(state.results_win)
-				vim.cmd("stopinsert")
-			elseif vim.api.nvim_get_current_win() == state.results_win then
-				vim.api.nvim_set_current_win(state.search_win)
-				vim.cmd("startinsert!")
+			local current = vim.api.nvim_get_current_win()
+			local next_win = nil
+			
+			-- Define cycle: Search -> Replace -> Results -> Search
+			if current == state.search_win then
+				next_win = state.replace_win
+			elseif current == state.replace_win then
+				next_win = state.results_win
+			else
+				-- From results or preview or anywhere else, go to search
+				next_win = state.search_win
 			end
-		end)
-
-		map(buf, { "n", "i" }, "<C-k>", function()
-			if vim.api.nvim_get_current_win() == state.search_win then
-				vim.api.nvim_set_current_win(state.results_win)
-				vim.cmd("stopinsert")
-			elseif vim.api.nvim_get_current_win() == state.replace_win then
-				vim.api.nvim_set_current_win(state.search_win)
-				vim.cmd("startinsert!")
-			elseif vim.api.nvim_get_current_win() == state.results_win then
-				vim.api.nvim_set_current_win(state.replace_win)
-				vim.cmd("startinsert!")
+			
+			if next_win and vim.api.nvim_win_is_valid(next_win) then
+				vim.api.nvim_set_current_win(next_win)
+				-- Enter insert mode only for text input windows
+				if next_win == state.search_win or next_win == state.replace_win then
+					vim.cmd("startinsert!")
+				else
+					vim.cmd("stopinsert")
+				end
 			end
 		end)
 	end
@@ -672,7 +671,7 @@ local function setup_keymaps()
 				"Type in Search field to find matches",
 				"",
 				"Navigation:",
-				"  <C-j> / <C-k>           - Move between input fields and results",
+				"  <C-j>                   - Cycle through input fields and results",
 				"  j/k or ↑/↓              - Navigate results list",
 				"",
 				"Selection:",
