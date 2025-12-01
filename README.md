@@ -191,16 +191,10 @@ Ensure you're in the correct input field and typing. The preview updates automat
 ## Contributing
 
 Contributions are welcome. Please ensure:
-- Code follows existing style conventions
+- Code follows existing style
 - Changes are tested with Neovim 0.8+
 - Commit messages are descriptive
 
 ## License
 
 MIT
-
-## Credits
-
-Built with:
-- [ripgrep](https://github.com/BurntSushi/ripgrep) for fast text replaceing
-- Neovim's floating window API for the custom UI
