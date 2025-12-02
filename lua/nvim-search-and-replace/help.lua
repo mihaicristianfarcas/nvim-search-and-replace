@@ -49,10 +49,12 @@ function M.show()
 		title_pos = "center",
 	})
 
-	vim.api.nvim_win_set_option(state.help_win, "winhl", "Normal:Normal,FloatBorder:FloatBorder")
-
-	-- Disable insert mode in help window
-	vim.api.nvim_create_autocmd("InsertEnter", {
+	-- Disable insert in help window
+	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", false)
+	vim.api.nvim_buf_set_option(state.help_buf, "readonly", true)
+	
+	-- Force normal mode when entering the help window
+	vim.api.nvim_create_autocmd({"BufEnter", "WinEnter"}, {
 		buffer = state.help_buf,
 		callback = function()
 			vim.cmd("stopinsert")
