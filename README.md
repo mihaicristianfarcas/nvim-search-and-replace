@@ -13,6 +13,8 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 - **Live Search Results** - Results update automatically as you type
 - **Visual Preview** - Side-by-side comparison showing before and after changes
+- **Regex Support** - Toggle between literal string matching and regex patterns with `Ctrl-t`
+- **Pre-filled Search** - Open with visual selection or word under cursor
 - **Safe Replacements** - Validates exact text matches before writing to prevent unintended modifications
 - **Syntax Highlighting** - Color-coded filenames, line numbers, and matched text
 - **Undo Support** - Revert the last batch of replacements with a single keypress
@@ -34,6 +36,7 @@ A Neovim plugin for performing project-wide search and replace operations with a
   cmd = "SearchAndReplaceOpen",
   keys = {
     { "<leader>sar", "<cmd>SearchAndReplaceOpen<cr>", desc = "[S]earch [A]nd [R]eplace" },
+    { "<leader>saw", "<cmd>SearchAndReplaceVisual<cr>", desc = "[S]earch [A]nd replace [W]ord" },
   },
   opts = {
     -- Optional configuration
@@ -68,6 +71,33 @@ Execute the following command to open the search and replace interface:
 ```vim
 :SearchAndReplaceOpen
 ```
+
+Or open with text from visual selection or word under cursor:
+
+```vim
+:SearchAndReplaceVisual
+```
+
+You can also open with a specific search term:
+
+```vim
+:SearchAndReplaceOpen search_term
+```
+
+### Quick Workflows
+
+**From visual selection or `*` search:**
+1. Select text in visual mode (or press `*` to search word under cursor)
+2. Run `:SearchAndReplaceVisual` (or map it to a key like `<leader>saw`)
+3. The interface opens with your selection pre-filled
+4. Enter replacement text and press `Ctrl-a` to replace all
+
+**Regex search:**
+1. Open the interface with `:SearchAndReplaceOpen`
+2. Press `Ctrl-t` to toggle regex mode
+3. Enter regex pattern (e.g., `\d+` to match numbers)
+4. Enter replacement text (supports capture groups like `\1`, `\2`)
+5. Review matches and replace
 
 ### Interface Layout
 
@@ -109,6 +139,7 @@ The UI consists of four main panes:
 |-----|------|--------|
 | `Enter` | Normal | Replace selected match |
 | `Ctrl-a` | Normal | Replace all matches |
+| `Ctrl-t` | Normal/Insert | Toggle between literal and regex mode |
 | `u` | Normal | Undo last replacement operation |
 | `Ctrl-z` | Normal/Insert | Undo last replacement operation |
 | `i` / `a` | Normal | Jump to search field (insert mode) |
@@ -151,15 +182,16 @@ require("nvim_search_and_replace").setup({
 
 | Command | Description |
 |---------|-------------|
-| `:SearchAndReplaceOpen` | Open the search and replace interface |
+| `:SearchAndReplaceOpen [term]` | Open the search and replace interface, optionally with a search term |
+| `:SearchAndReplaceVisual` | Open with visual selection or word under cursor |
 | `:SearchAndReplaceUndo` | Undo the most recent replacement operation |
 
 ## How It Works
 
-1. **Search**: Uses `ripgrep` to quickly find all matches across the project
+1. **Search**: Uses `ripgrep` to quickly find all matches across the project (supports both literal and regex modes)
 2. **Preview**: Displays matched lines with context and shows how replacements will appear
-3. **Validation**: Before writing, validates that the text at each location still matches the replace term
-4. **Replacement**: Writes changes to files only when validation passes
+3. **Validation**: Before writing, validates that the text at each location still matches the search term
+4. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
 5. **History**: Stores previous file content for undo functionality
 
 ### Safety Features
