@@ -93,9 +93,11 @@ function M.create_windows(layout, buffers, use_regex)
 	return windows
 end
 
-function M.update_search_title(search_win, use_regex)
+function M.update_search_title(search_win, use_regex, searching)
 	if search_win and vim.api.nvim_win_is_valid(search_win) then
-		local title = use_regex and " Search (Regex) " or " Search (Literal) "
+		local mode = use_regex and "Regex" or "Literal"
+		local status = searching and " [Searching...] " or " "
+		local title = " Search (" .. mode .. ")" .. status
 		vim.api.nvim_win_set_config(search_win, { title = title })
 	end
 end

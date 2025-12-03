@@ -21,6 +21,11 @@ function M.setup(state, callbacks)
 			map(buf, { "n", "i" }, key, callbacks.toggle_regex)
 		end
 
+		-- Stop search
+		for _, key in ipairs(kb.stop_search.keys) do
+			map(buf, { "n", "i" }, key, callbacks.stop_search)
+		end
+
 		-- Close
 		for _, key in ipairs(kb.close.keys) do
 			map(buf, "n", key, callbacks.close)
@@ -157,9 +162,7 @@ function M.setup(state, callbacks)
 	-- Auto-search on text change in search buffer
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = state.search_buf,
-		callback = function()
-			vim.defer_fn(callbacks.do_search, 300)
-		end,
+		callback = callbacks.do_search,
 	})
 
 	-- Auto-update preview on replace text change

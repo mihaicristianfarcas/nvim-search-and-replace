@@ -11,15 +11,16 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 ### Key Features
 
-- **Live Search Results** - Results update automatically as you type
+- **Async Live Search** - Fast streaming search results with async ripgrep integration
 - **Visual Preview** - Side-by-side comparison showing before and after changes
 - **Regex Support** - Toggle between literal string matching and regex patterns with `Ctrl-t`
-- **Pre-filled Search** - Open with visual selection or word under cursor
+- **Selective Replacement** - Mark specific items or replace all matches at once
+- **Pre-filled Search** - Open with visual selection, search pattern (`*`), or word under cursor
 - **Safe Replacements** - Validates exact text matches before writing to prevent unintended modifications
+- **Undo/Redo** - Full undo/redo stack for all replacement operations
 - **Syntax Highlighting** - Color-coded filenames, line numbers, and matched text
-- **Undo Support** - Revert the last batch of replacements with a single keypress
-- **Text Wrapping** - Full text visibility in results and preview panes
-- **Relative Paths** - Clean display of file paths relative to working directory
+- **Search Cancellation** - Stop long-running searches with `Ctrl-x`
+- **Built-in Help** - Press `?` or `F1` for keybinding reference
 
 ## Requirements
 
@@ -43,6 +44,7 @@ A Neovim plugin for performing project-wide search and replace operations with a
     rg_binary = "rg",
     literal = true,
     smart_case = true,
+    max_results = 10000,
   },
 }
 ```
@@ -57,6 +59,7 @@ use {
       rg_binary = "rg",
       literal = true,
       smart_case = true,
+      max_results = 10000,
     })
   end
 }
@@ -116,40 +119,51 @@ The UI consists of four main panes:
 
 ### Workflow
 
-1. Enter search term in the top field
-2. Enter replacement text in the second field
+1. Enter search term in the top field (results update live as you type)
+2. Enter replacement text in the second field (preview updates automatically)
 3. Navigate through results using `j`/`k` keys
 4. Review changes in the preview pane
-5. Press `Enter` to replace the selected item or `Ctrl-a` to replace all matches
-6. Use `u` to undo if needed
+5. **Option A**: Press `Tab` to mark specific items, then `Enter` to replace marked items
+6. **Option B**: Press `Ctrl-a` to replace all matches at once
+7. Use `u` or `Ctrl-z` to undo, `Ctrl-r` to redo
 
 ### Keybindings
+
+#### Help
+| Key | Mode | Action |
+|-----|------|--------|
+| `?` / `F1` | Normal/Insert | Toggle help window |
 
 #### Navigation
 | Key | Mode | Action |
 |-----|------|--------|
-| `Tab` | Normal | Select file(s) |
-| `Shift-Tab` | Normal | Unselect file(s) |
 | `Ctrl-j` | Normal/Insert | Cycle through fields (search → replace → results) |
-| `j` / `k` | Normal | Navigate results list |
-| `↑` / `↓` | Normal | Navigate results list |
+| `Tab` | Insert | Move to next field (search → replace → results) |
+| `Shift-Tab` | Insert | Move to previous field |
+| `j` / `k` / `↑` / `↓` | Normal | Navigate results list |
+| `i` / `a` | Normal (in results) | Jump to search field (insert mode) |
+| `I` | Normal (in results) | Jump to replace field (insert mode) |
+
+#### Selection
+| Key | Mode | Action |
+|-----|------|--------|
+| `Tab` | Normal (in results) | Mark/select current item |
+| `Shift-Tab` | Normal (in results) | Unmark/unselect current item |
 
 #### Actions
 | Key | Mode | Action |
 |-----|------|--------|
-| `Enter` | Normal | Replace selected match |
-| `Ctrl-a` | Normal | Replace all matches |
+| `Enter` | Normal (in results) | Replace current item (or all marked items if any) |
+| `Ctrl-a` | Normal/Insert | Replace ALL matches |
 | `Ctrl-t` | Normal/Insert | Toggle between literal and regex mode |
-| `u` | Normal | Undo last replacement operation |
-| `Ctrl-z` | Normal/Insert | Undo last replacement operation |
-| `i` / `a` | Normal | Jump to search field (insert mode) |
-| `I` | Normal | Jump to replace field (insert mode) |
+| `Ctrl-x` | Normal/Insert | Stop/abort current search |
+| `u` / `Ctrl-z` | Normal/Insert | Undo last replacement |
+| `Ctrl-r` / `Ctrl-Shift-z` | Normal/Insert | Redo last replacement |
 
 #### Window Management
 | Key | Mode | Action |
 |-----|------|--------|
-| `Esc` | Normal | Close interface |
-| `q` | Normal | Close interface |
+| `Esc` / `q` | Normal | Close interface |
 | `Ctrl-c` | Normal/Insert | Close interface |
 
 ## Configuration
@@ -167,6 +181,9 @@ require("nvim_search_and_replace").setup({
   
   -- Case-insensitive search unless uppercase letters are used (default: true)
   smart_case = true,
+  
+  -- Maximum number of search results to display (default: 10000)
+  max_results = 10000,
 })
 ```
 
@@ -177,22 +194,25 @@ require("nvim_search_and_replace").setup({
 | `rg_binary` | string | `"rg"` | Path to the ripgrep executable |
 | `literal` | boolean | `true` | Use exact string matching (recommended) |
 | `smart_case` | boolean | `true` | Case-insensitive search unless uppercase is present |
+| `max_results` | number | `10000` | Maximum number of search results to display |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `:SearchAndReplaceOpen [term]` | Open the search and replace interface, optionally with a search term |
-| `:SearchAndReplaceVisual` | Open with visual selection or word under cursor |
+| `:SearchAndReplaceVisual` | Open with visual selection, search pattern (`/` register), or word under cursor |
 | `:SearchAndReplaceUndo` | Undo the most recent replacement operation |
+| `:SearchAndReplaceRedo` | Redo the most recent undone replacement operation |
 
 ## How It Works
 
-1. **Search**: Uses `ripgrep` to quickly find all matches across the project (supports both literal and regex modes)
-2. **Preview**: Displays matched lines with context and shows how replacements will appear
-3. **Validation**: Before writing, validates that the text at each location still matches the search term
-4. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
-5. **History**: Stores previous file content for undo functionality
+1. **Async Search**: Uses `ripgrep` with async streaming for fast, non-blocking search across the project
+2. **Token-based Cancellation**: Unique tokens prevent stale search results from updating UI after new searches start
+3. **Live Preview**: Real-time preview updates as you type with debounced search (300ms)
+4. **Validation**: Before writing, validates that the text at each location still matches the search term
+5. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
+6. **History Stack**: Full undo/redo stack stores previous file content for all operations
 
 ### Safety Features
 
@@ -204,8 +224,9 @@ require("nvim_search_and_replace").setup({
 ## Limitations
 
 - Only single-line matches are currently supported
-- Uses synchronous file operations (no async I/O)
+- File operations are synchronous (search is async, file writes are not)
 - Follows ripgrep's default ignore rules (respects `.gitignore`)
+- Search results limited by `max_results` config (default: 10,000)
 
 ## Troubleshooting
 
@@ -219,6 +240,10 @@ This is expected behavior. The plugin validates that the text at each match loca
 ### Preview not updating
 
 Ensure you're in the correct input field and typing. The preview updates automatically after a 300ms debounce period.
+
+### Search is taking too long
+
+Press `Ctrl-x` to stop the current search. Consider using more specific search terms or enabling literal mode for faster searches.
 
 ## Contributing
 

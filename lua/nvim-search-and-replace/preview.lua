@@ -25,8 +25,8 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	end
 
 	local lnum = result.lnum
-	local context_before = 15
-	local context_after = 15
+	local context_before = 20
+	local context_after = 20
 	local start_line = math.max(1, lnum - context_before)
 	local end_line = math.min(#file_lines, lnum + context_after)
 
