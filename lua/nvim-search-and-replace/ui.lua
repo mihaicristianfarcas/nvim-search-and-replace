@@ -17,6 +17,8 @@ local state = {
 	selected_idx = 1,
 	selected_items = {},
 	use_regex = false,
+	searching = false,
+	debounce_timer = nil,
 
 	-- Buffer handles
 	search_buf = nil,
@@ -42,16 +44,84 @@ end
 
 local function do_search()
 	state.search_text = vim.api.nvim_buf_get_lines(state.search_buf, 0, -1, false)[1] or ""
-	state.results = search.run_ripgrep(state.search_text, { literal = not state.use_regex })
-	state.selected_idx = 1
-	state.selected_items = {}
-	update_results_list()
-	update_preview()
 	
-	-- Reset cursor to top of results
-	if state.results_win and vim.api.nvim_win_is_valid(state.results_win) and #state.results > 0 then
-		vim.api.nvim_win_set_cursor(state.results_win, {1, 0})
+	if state.searching then
+		search.stop_search()
 	end
+	
+	state.searching = true
+	windows.update_search_title(state.search_win, state.use_regex, true)
+	
+	local new_results = {}
+	local new_selected_idx = 1
+	local new_selected_items = {}
+	
+	local config = require("nvim-search-and-replace").get_config()
+	
+	search.run_ripgrep_async(
+		state.search_text, 
+		{ 
+			literal = not state.use_regex,
+			max_results = config.max_results
+		},
+		function(batch, total_count, truncated)
+			for _, result in ipairs(batch) do
+				table.insert(new_results, result)
+			end
+			state.results = new_results
+			state.selected_idx = new_selected_idx
+			state.selected_items = new_selected_items
+			update_results_list()
+			if state.selected_idx <= #state.results then
+				update_preview()
+			end
+		end,
+		function(final_results, exit_code, truncated)
+			state.searching = false
+			windows.update_search_title(state.search_win, state.use_regex, false)
+			
+			-- Use final_results from search module as authoritative source
+			state.results = final_results
+			state.selected_idx = #final_results > 0 and 1 or 0
+			state.selected_items = {}
+			update_results_list()
+			update_preview()
+			
+			exit_code = exit_code or 0
+			-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
+			if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
+				vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
+			elseif exit_code ~= 143 then
+				if #final_results == 0 then
+					vim.notify("No results found", vim.log.levels.INFO)
+				else
+					local msg = string.format("Found %d matches", #final_results)
+					if truncated then
+						msg = msg .. " (truncated - too many results)"
+					end
+					vim.notify(msg, truncated and vim.log.levels.WARN or vim.log.levels.INFO)
+				end
+			end
+			
+			if state.results_win and vim.api.nvim_win_is_valid(state.results_win) and #final_results > 0 then
+				vim.api.nvim_win_set_cursor(state.results_win, {1, 0})
+			end
+		end
+	)
+end
+
+local function debounced_search()
+	-- Cancel any pending search
+	if state.debounce_timer then
+		vim.fn.timer_stop(state.debounce_timer)
+		state.debounce_timer = nil
+	end
+	
+	-- Schedule new search
+	state.debounce_timer = vim.fn.timer_start(300, function()
+		state.debounce_timer = nil
+		do_search()
+	end)
 end
 
 local function toggle_regex()
@@ -174,6 +244,16 @@ local function setup_keymaps_internal()
 	local callbacks = {
 		show_help = help.show,
 		toggle_regex = toggle_regex,
+		stop_search = function()
+			if state.debounce_timer then
+				vim.fn.timer_stop(state.debounce_timer)
+				state.debounce_timer = nil
+			end
+			search.stop_search()
+			state.searching = false
+			windows.update_search_title(state.search_win, state.use_regex, false)
+			vim.notify("Search stopped", vim.log.levels.INFO)
+		end,
 		close = M.close,
 		undo = undo_action,
 		redo = redo_action,
@@ -183,7 +263,7 @@ local function setup_keymaps_internal()
 		select_prev = select_prev,
 		replace_selected = replace_selected,
 		replace_all = replace_all,
-		do_search = do_search,
+		do_search = debounced_search,
 		update_preview_text = update_preview_text,
 	}
 	
@@ -211,6 +291,12 @@ function M.open(opts)
 end
 
 function M.close()
+	if state.debounce_timer then
+		vim.fn.timer_stop(state.debounce_timer)
+		state.debounce_timer = nil
+	end
+	
+	search.stop_search()
 	help.close()
 
 	for _, win in ipairs({ state.search_win, state.replace_win, state.results_win, state.preview_win }) do
@@ -223,6 +309,7 @@ function M.close()
 	state.replace_win = nil
 	state.results_win = nil
 	state.preview_win = nil
+	state.searching = false
 end
 
 return M
