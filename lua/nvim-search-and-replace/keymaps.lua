@@ -45,34 +45,9 @@ function M.setup(state, callbacks)
 		for _, key in ipairs(kb.redo.keys) do
 			map(buf, { "n", "i" }, key, callbacks.redo)
 		end
-
-		-- Cycle windows
-		for _, key in ipairs(kb.cycle_windows.keys) do
-			map(buf, { "n", "i" }, key, function()
-				local current = vim.api.nvim_get_current_win()
-				local next_win = nil
-				
-				if current == state.search_win then
-					next_win = state.replace_win
-				elseif current == state.replace_win then
-					next_win = state.results_win
-				else
-					next_win = state.search_win
-				end
-				
-				if next_win and vim.api.nvim_win_is_valid(next_win) then
-					vim.api.nvim_set_current_win(next_win)
-					if next_win == state.search_win or next_win == state.replace_win then
-						vim.cmd("startinsert!")
-					else
-						vim.cmd("stopinsert")
-					end
-				end
-			end)
-		end
 	end
 
-	-- Tab/Shift-Tab for navigation in search and replace buffers
+	-- Tab/Shift-Tab for navigation between input fields
 	for _, buf in ipairs({ state.search_buf, state.replace_buf }) do
 		map(buf, { "i", "n" }, "<Tab>", function()
 			if vim.api.nvim_get_current_win() == state.search_win then
@@ -94,10 +69,6 @@ function M.setup(state, callbacks)
 			end
 		end)
 	end
-
-	-- Results buffer: Tab to select, Shift-Tab to unselect
-	map(state.results_buf, "n", "<Tab>", callbacks.select_next)
-	map(state.results_buf, "n", "<S-Tab>", callbacks.select_prev)
 
 	-- Search buffer keymaps
 	map(state.search_buf, { "i", "n" }, "<CR>", function()
@@ -126,18 +97,27 @@ function M.setup(state, callbacks)
 		vim.cmd("startinsert!")
 	end)
 
-	-- Results buffer navigation
-	for _, key in ipairs(kb.move_down.keys) do
-		map(state.results_buf, "n", key, callbacks.move_down)
-	end
+	-- Results buffer: Tab/Shift-Tab to navigate to input fields
+	map(state.results_buf, "n", "<Tab>", function()
+		vim.api.nvim_set_current_win(state.search_win)
+		vim.cmd("startinsert!")
+	end)
 	
-	for _, key in ipairs(kb.move_up.keys) do
-		map(state.results_buf, "n", key, callbacks.move_up)
-	end
+	map(state.results_buf, "n", "<S-Tab>", function()
+		vim.api.nvim_set_current_win(state.replace_win)
+		vim.cmd("startinsert!")
+	end)
 
-	-- Replace actions
+	-- Results buffer: Update preview on cursor move
+	vim.api.nvim_create_autocmd("CursorMoved", {
+		buffer = state.results_buf,
+		callback = callbacks.update_cursor_preview,
+	})
+
+	-- Replace actions (works in both normal and visual mode)
 	for _, key in ipairs(kb.replace_selected.keys) do
 		map(state.results_buf, "n", key, callbacks.replace_selected)
+		map(state.results_buf, "v", key, callbacks.replace_selected)
 	end
 	
 	for _, key in ipairs(kb.replace_all.keys) do

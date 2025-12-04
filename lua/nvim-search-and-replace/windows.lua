@@ -86,7 +86,7 @@ function M.create_windows(layout, buffers, use_regex)
 	-- Set window options
 	vim.api.nvim_win_set_option(windows.search, "wrap", false)
 	vim.api.nvim_win_set_option(windows.replace, "wrap", false)
-	vim.api.nvim_win_set_option(windows.results, "cursorline", false)
+	vim.api.nvim_win_set_option(windows.results, "cursorline", true)
 	vim.api.nvim_win_set_option(windows.results, "wrap", false)
 	vim.api.nvim_win_set_option(windows.preview, "wrap", true)
 
@@ -123,6 +123,7 @@ function M.create_buffers(search_text, replace_text)
 
 	vim.api.nvim_buf_set_option(buffers.results, "buftype", "nofile")
 	vim.api.nvim_buf_set_option(buffers.results, "modifiable", false)
+	vim.api.nvim_buf_set_option(buffers.results, "wrap", false)
 	vim.api.nvim_buf_set_option(buffers.preview, "buftype", "nofile")
 	vim.api.nvim_buf_set_option(buffers.preview, "modifiable", false)
 

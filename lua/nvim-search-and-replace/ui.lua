@@ -141,65 +141,40 @@ local function redo_action()
 	do_search()
 end
 
-local function move_down()
-	if #state.results > 0 then
-		state.selected_idx = state.selected_idx + 1
-		if state.selected_idx > #state.results then
-			state.selected_idx = 1
-		end
-		update_results_list()
+local function update_cursor_preview()
+	if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+		local cursor_pos = vim.api.nvim_win_get_cursor(state.results_win)
+		state.selected_idx = cursor_pos[1]
 		update_preview()
-		vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
-	end
-end
-
-local function move_up()
-	if #state.results > 0 then
-		state.selected_idx = state.selected_idx - 1
-		if state.selected_idx < 1 then
-			state.selected_idx = #state.results
-		end
-		update_results_list()
-		update_preview()
-		vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
-	end
-end
-
-local function select_next()
-	if state.selected_idx > 0 and state.selected_idx <= #state.results then
-		state.selected_items[state.selected_idx] = true
-		state.selected_idx = state.selected_idx + 1
-		if state.selected_idx > #state.results then
-			state.selected_idx = 1
-		end
-		update_results_list()
-		update_preview()
-		vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
-	end
-end
-
-local function select_prev()
-	if state.selected_idx > 0 and state.selected_idx <= #state.results then
-		state.selected_items[state.selected_idx] = nil
-		state.selected_idx = state.selected_idx - 1
-		if state.selected_idx < 1 then
-			state.selected_idx = #state.results
-		end
-		update_results_list()
-		update_preview()
-		vim.api.nvim_win_set_cursor(state.results_win, { state.selected_idx, 0 })
 	end
 end
 
 local function replace_selected()
 	local items_to_replace = {}
-	if next(state.selected_items) then
-		for idx, _ in pairs(state.selected_items) do
-			table.insert(items_to_replace, state.results[idx])
+	
+	-- Get visual selection range if in visual mode
+	local mode = vim.api.nvim_get_mode().mode
+	if mode:match("[vV]") then
+		-- Get visual selection range
+		local start_pos = vim.fn.getpos("v")
+		local end_pos = vim.fn.getpos(".")
+		local start_line = math.min(start_pos[2], end_pos[2])
+		local end_line = math.max(start_pos[2], end_pos[2])
+		
+		for i = start_line, end_line do
+			if state.results[i] then
+				table.insert(items_to_replace, state.results[i])
+			end
 		end
+		
+		-- Exit visual mode
+		vim.cmd("normal! \x1b")
 	else
-		if state.results[state.selected_idx] then
-			items_to_replace = { state.results[state.selected_idx] }
+		-- Single item at cursor
+		local cursor_pos = vim.api.nvim_win_get_cursor(state.results_win)
+		local idx = cursor_pos[1]
+		if state.results[idx] then
+			items_to_replace = { state.results[idx] }
 		end
 	end
 
@@ -257,10 +232,7 @@ local function setup_keymaps_internal()
 		close = M.close,
 		undo = undo_action,
 		redo = redo_action,
-		move_down = move_down,
-		move_up = move_up,
-		select_next = select_next,
-		select_prev = select_prev,
+		update_cursor_preview = update_cursor_preview,
 		replace_selected = replace_selected,
 		replace_all = replace_all,
 		do_search = debounced_search,
