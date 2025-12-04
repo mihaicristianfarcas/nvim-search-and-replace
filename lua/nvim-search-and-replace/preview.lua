@@ -32,10 +32,10 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 			break
 		end
 	end
-	
+
 	local win_height = preview_win and vim.api.nvim_win_get_height(preview_win) or 40
-	local context_lines = math.floor((win_height - 10) / 2)  -- Account for header and BEFORE/AFTER labels
-	
+	local context_lines = math.floor(win_height / 2)
+
 	local lnum = result.lnum
 	local context_before = context_lines
 	local context_after = context_lines
@@ -69,7 +69,7 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 			table.insert(preview_lines, "")
 			table.insert(preview_lines, "      BEFORE:")
 			before_line_idx = #preview_lines + 1
-			matched_line_idx = before_line_idx  -- Track the actual matched line
+			matched_line_idx = before_line_idx -- Track the actual matched line
 			table.insert(preview_lines, prefix .. " " .. line)
 			table.insert(preview_lines, "      AFTER:")
 			after_line_idx = #preview_lines + 1
@@ -129,18 +129,20 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 				-- Content starts at content_start + 4 (after "│ " - 3 bytes for │ + 1 space)
 				local content_offset = content_start + 3
 				local is_matched_line = (i == matched_line_idx)
-				
+
 				-- Search directly in the display line starting from where content begins
 				local search_start = content_offset + 1
 				while true do
 					local match_start, match_end = line:find(pattern_esc, search_start)
-					if not match_start then break end
-					
+					if not match_start then
+						break
+					end
+
 					-- Check if this is the specific match at result.col
 					-- Convert display position back to original line column
 					local col_in_original = match_start - content_offset
 					local is_the_match = is_matched_line and (col_in_original == result.col)
-					
+
 					vim.api.nvim_buf_add_highlight(
 						preview_buf,
 						ns,
@@ -149,16 +151,16 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 						match_start - 1,
 						match_end
 					)
-					
+
 					search_start = match_end + 1
 				end
 			end
 		end
 	end
-	
+
 	-- Center the matched line in the preview window
 	if preview_win and matched_line_idx then
-		vim.api.nvim_win_set_cursor(preview_win, {matched_line_idx, 0})
+		vim.api.nvim_win_set_cursor(preview_win, { matched_line_idx, 0 })
 		vim.api.nvim_win_call(preview_win, function()
 			vim.cmd("normal! zz")
 		end)
