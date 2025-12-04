@@ -8,17 +8,13 @@ M.keybindings = {
 	help = { keys = { "?", "<F1>" }, description = "Toggle this help window" },
 	
 	-- Navigation
-	cycle_windows = { keys = { "<C-j>" }, description = "Cycle through input fields and results" },
 	next_field = { keys = { "<CR>", "<Tab>" }, description = "Move to next field (Search → Replace → Results)" },
 	prev_field = { keys = { "<S-Tab>" }, description = "Move to previous field" },
-	move_down = { keys = { "j", "<Down>" }, description = "Navigate results list down" },
-	move_up = { keys = { "k", "<Up>" }, description = "Navigate results list up" },
 	jump_search = { keys = { "i", "a" }, description = "Jump to search field" },
 	jump_replace = { keys = { "I" }, description = "Jump to replace field" },
 	
 	-- Selection (in results)
-	select_item = { keys = { "<Tab>" }, description = "Mark/select current item" },
-	unselect_item = { keys = { "<S-Tab>" }, description = "Unmark/unselect current item" },
+	visual_select = { keys = { "v", "V" }, description = "Visual mode to select multiple results" },
 	
 	-- Actions
 	replace_selected = { keys = { "<CR>" }, description = "Replace current (or all marked items)", context = "in results" },
@@ -51,13 +47,12 @@ function M.get_help_lines()
 		"  SEARCH AND REPLACE - HELP",
 		"",
 		"  Navigation:",
-		"    " .. M.format_keys(kb.cycle_windows.keys) .. string.rep(" ", 28 - #M.format_keys(kb.cycle_windows.keys)) .. "- " .. kb.cycle_windows.description,
 		"    " .. M.format_keys(kb.next_field.keys) .. string.rep(" ", 28 - #M.format_keys(kb.next_field.keys)) .. "- " .. kb.next_field.description,
-		"    " .. M.format_keys(kb.move_down.keys) .. " or " .. M.format_keys(kb.move_up.keys) .. string.rep(" ", 28 - #(M.format_keys(kb.move_down.keys) .. " or " .. M.format_keys(kb.move_up.keys))) .. "- Navigate results list",
+		"    " .. M.format_keys(kb.prev_field.keys) .. string.rep(" ", 28 - #M.format_keys(kb.prev_field.keys)) .. "- " .. kb.prev_field.description,
+		"    j/k or arrow keys" .. string.rep(" ", 28 - 17) .. "- Navigate results list",
 		"",
-		"  Selection:",
-		"    " .. M.format_keys(kb.select_item.keys) .. " (in results)" .. string.rep(" ", 28 - #(M.format_keys(kb.select_item.keys) .. " (in results)")) .. "- " .. kb.select_item.description,
-		"    " .. M.format_keys(kb.unselect_item.keys) .. " (in results)" .. string.rep(" ", 28 - #(M.format_keys(kb.unselect_item.keys) .. " (in results)")) .. "- " .. kb.unselect_item.description,
+		"  Selection (in results):",
+		"    " .. M.format_keys(kb.visual_select.keys) .. string.rep(" ", 28 - #M.format_keys(kb.visual_select.keys)) .. "- " .. kb.visual_select.description,
 		"",
 		"  Actions:",
 		"    " .. M.format_keys(kb.replace_selected.keys) .. " (in results)" .. string.rep(" ", 28 - #(M.format_keys(kb.replace_selected.keys) .. " (in results)")) .. "- " .. kb.replace_selected.description,

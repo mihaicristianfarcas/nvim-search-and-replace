@@ -44,6 +44,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 		"--no-heading",
 		"--line-number",
 		"--column",
+		"--vimgrep",
 		"--sort=path",
 	}
 
@@ -169,6 +170,7 @@ function M.run_ripgrep(search, opts)
 		"--no-heading",
 		"--line-number",
 		"--column",
+		"--vimgrep",
 		"--sort=path",
 	}
 

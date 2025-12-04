@@ -24,15 +24,28 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 		return
 	end
 
+	-- Get preview window height to calculate centering
+	local preview_win = nil
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if vim.api.nvim_win_get_buf(win) == preview_buf then
+			preview_win = win
+			break
+		end
+	end
+
+	local win_height = preview_win and vim.api.nvim_win_get_height(preview_win) or 40
+	local context_lines = math.floor(win_height / 2)
+
 	local lnum = result.lnum
-	local context_before = 20
-	local context_after = 20
+	local context_before = context_lines
+	local context_after = context_lines
 	local start_line = math.max(1, lnum - context_before)
 	local end_line = math.min(#file_lines, lnum + context_after)
 
 	local preview_lines = {}
 	local before_line_idx = nil
 	local after_line_idx = nil
+	local matched_line_idx = nil
 
 	-- Add filename header
 	local cwd = vim.loop.cwd()
@@ -46,7 +59,7 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	-- Show context with before/after
 	for i = start_line, end_line do
 		local line = file_lines[i] or ""
-		local prefix = string.format("%4d │ ", i)
+		local prefix = string.format("%4d │", i)
 
 		if i == lnum and replace_text ~= "" then
 			-- Show the change
@@ -56,13 +69,18 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 			table.insert(preview_lines, "")
 			table.insert(preview_lines, "      BEFORE:")
 			before_line_idx = #preview_lines + 1
-			table.insert(preview_lines, prefix .. line)
+			matched_line_idx = before_line_idx -- Track the actual matched line
+			table.insert(preview_lines, prefix .. " " .. line)
 			table.insert(preview_lines, "      AFTER:")
 			after_line_idx = #preview_lines + 1
-			table.insert(preview_lines, prefix .. (new_line or line))
+			table.insert(preview_lines, prefix .. " " .. (new_line or line))
 			table.insert(preview_lines, "")
 		else
-			table.insert(preview_lines, prefix .. line)
+			table.insert(preview_lines, prefix .. " " .. line)
+			-- Track matched line even when no replace text
+			if i == lnum then
+				matched_line_idx = #preview_lines
+			end
 		end
 	end
 
@@ -102,21 +120,50 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 		vim.api.nvim_buf_add_highlight(preview_buf, ns, "DiffAdd", after_line_idx - 1, 0, -1)
 	end
 
-	-- Highlight the search term in the preview
+	-- Highlight the search term in preview - distinctive highlight for the matched occurrence
 	if search_text ~= "" then
+		local pattern_esc = vim.pesc(search_text)
 		for i, line in ipairs(preview_lines) do
-			local match_start = line:find(vim.pesc(search_text))
-			if match_start then
-				vim.api.nvim_buf_add_highlight(
-					preview_buf,
-					ns,
-					"Search",
-					i - 1,
-					match_start - 1,
-					match_start - 1 + #search_text
-				)
+			local content_start = line:find("│")
+			if content_start then
+				-- Content starts at content_start + 4 (after "│ " - 3 bytes for │ + 1 space)
+				local content_offset = content_start + 3
+				local is_matched_line = (i == matched_line_idx)
+
+				-- Search directly in the display line starting from where content begins
+				local search_start = content_offset + 1
+				while true do
+					local match_start, match_end = line:find(pattern_esc, search_start)
+					if not match_start then
+						break
+					end
+
+					-- Check if this is the specific match at result.col
+					-- Convert display position back to original line column
+					local col_in_original = match_start - content_offset
+					local is_the_match = is_matched_line and (col_in_original == result.col)
+
+					vim.api.nvim_buf_add_highlight(
+						preview_buf,
+						ns,
+						is_the_match and "IncSearch" or "Search",
+						i - 1,
+						match_start - 1,
+						match_end
+					)
+
+					search_start = match_end + 1
+				end
 			end
 		end
+	end
+
+	-- Center the matched line in the preview window
+	if preview_win and matched_line_idx then
+		vim.api.nvim_win_set_cursor(preview_win, { matched_line_idx, 0 })
+		vim.api.nvim_win_call(preview_win, function()
+			vim.cmd("normal! zz")
+		end)
 	end
 end
 
