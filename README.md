@@ -13,6 +13,7 @@ A Neovim plugin for performing project-wide search and replace operations with a
 
 - **Async Live Search** - Fast streaming search results with async ripgrep integration
 - **Visual Preview** - Side-by-side comparison showing before and after changes
+- **Jump To Match** - Open the previewed file directly at the matched location
 - **Regex Support** - Toggle between literal string matching and regex patterns with `Ctrl-t`
 - **Selective Replacement** - Mark specific items or replace all matches at once
 - **Pre-filled Search** - Open with visual selection, search pattern (`*`), or word under cursor
@@ -154,6 +155,7 @@ The UI consists of four main panes:
 | Key | Mode | Action |
 |-----|------|--------|
 | `Enter` | Normal (in results) | Replace current item (or all marked items if any) |
+| `o` | Normal (in results) | Open the previewed file at the matched location |
 | `Ctrl-a` | Normal/Insert | Replace ALL matches |
 | `Ctrl-t` | Normal/Insert | Toggle between literal and regex mode |
 | `Ctrl-x` | Normal/Insert | Stop/abort current search |

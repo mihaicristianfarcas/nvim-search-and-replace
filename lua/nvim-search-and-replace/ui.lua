@@ -193,6 +193,28 @@ local function replace_all()
 	M.close()
 end
 
+local function open_in_file()
+	-- Trust the cursor position in the results window if available
+	if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+		local cursor_pos = vim.api.nvim_win_get_cursor(state.results_win)
+		state.selected_idx = math.max(cursor_pos[1], 1)
+	end
+
+	local result = state.results[state.selected_idx]
+	if not result then
+		vim.notify("No result selected to open.", vim.log.levels.WARN)
+		return
+	end
+
+	-- Close UI before opening the target file so it opens in a normal window
+	M.close()
+
+	local escaped = vim.fn.fnameescape(result.filename)
+	vim.cmd(string.format("edit +%d %s", result.lnum, escaped))
+	pcall(vim.api.nvim_win_set_cursor, 0, { result.lnum, math.max(result.col - 1, 0) })
+	vim.cmd("normal! zz")
+end
+
 local function update_preview_text()
 	state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
 	update_preview()
@@ -235,6 +257,7 @@ local function setup_keymaps_internal()
 		update_cursor_preview = update_cursor_preview,
 		replace_selected = replace_selected,
 		replace_all = replace_all,
+		open_in_file = open_in_file,
 		do_search = debounced_search,
 		update_preview_text = update_preview_text,
 	}

@@ -19,6 +19,7 @@ M.keybindings = {
 	-- Actions
 	replace_selected = { keys = { "<CR>" }, description = "Replace current (or all marked items)", context = "in results" },
 	replace_all = { keys = { "<C-a>" }, description = "Replace ALL matches" },
+	open_in_file = { keys = { "o" }, description = "Open current result in file", context = "in results" },
 	toggle_regex = { keys = { "<C-t>" }, description = "Toggle regex/literal mode" },
 	stop_search = { keys = { "<C-x>" }, description = "Stop/abort current search" },
 	undo = { keys = { "u", "<C-z>" }, description = "Undo last replacement" },
@@ -57,6 +58,7 @@ function M.get_help_lines()
 		"  Actions:",
 		"    " .. M.format_keys(kb.replace_selected.keys) .. " (in results)" .. string.rep(" ", 28 - #(M.format_keys(kb.replace_selected.keys) .. " (in results)")) .. "- " .. kb.replace_selected.description,
 		"    " .. M.format_keys(kb.replace_all.keys) .. string.rep(" ", 28 - #M.format_keys(kb.replace_all.keys)) .. "- " .. kb.replace_all.description,
+		"    " .. M.format_keys(kb.open_in_file.keys) .. " (in results)" .. string.rep(" ", 28 - #(M.format_keys(kb.open_in_file.keys) .. " (in results)")) .. "- " .. kb.open_in_file.description,
 		"    " .. M.format_keys(kb.toggle_regex.keys) .. string.rep(" ", 28 - #M.format_keys(kb.toggle_regex.keys)) .. "- " .. kb.toggle_regex.description,
 		"    " .. M.format_keys(kb.stop_search.keys) .. string.rep(" ", 28 - #M.format_keys(kb.stop_search.keys)) .. "- " .. kb.stop_search.description,
 		"    " .. M.format_keys(kb.undo.keys) .. string.rep(" ", 28 - #M.format_keys(kb.undo.keys)) .. "- " .. kb.undo.description,

@@ -120,6 +120,10 @@ function M.setup(state, callbacks)
 		map(state.results_buf, "v", key, callbacks.replace_selected)
 	end
 	
+	for _, key in ipairs(kb.open_in_file.keys) do
+		map(state.results_buf, "n", key, callbacks.open_in_file)
+	end
+	
 	for _, key in ipairs(kb.replace_all.keys) do
 		map(state.results_buf, "n", key, callbacks.replace_all)
 	end
