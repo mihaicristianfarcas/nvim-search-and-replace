@@ -59,12 +59,7 @@ local function build_matcher(search, opts)
   }
 end
 
-function M.compute_line(line, col, search, replace_text, opts)
-  local matcher, err = build_matcher(search, opts)
-  if not matcher then
-    return nil, nil, nil, err
-  end
-
+local function compute_line_with_matcher(matcher, line, col, search, replace_text)
   local start_idx, end_idx, segment = matcher.match(line, col)
   if not start_idx then
     local expected = search
@@ -74,6 +69,14 @@ function M.compute_line(line, col, search, replace_text, opts)
 
   local new_line = string.sub(line, 1, start_idx - 1) .. replace_text .. string.sub(line, end_idx + 1)
   return new_line, start_idx, end_idx, nil
+end
+
+function M.compute_line(line, col, search, replace_text, opts)
+  local matcher, err = build_matcher(search, opts)
+  if not matcher then
+    return nil, nil, nil, err
+  end
+  return compute_line_with_matcher(matcher, line, col, search, replace_text)
 end
 
 function M.apply(entries, search, replace_text, opts)
@@ -86,6 +89,12 @@ function M.apply(entries, search, replace_text, opts)
 
   if not search or search == "" then
     vim.notify("Search text is empty.", vim.log.levels.WARN)
+    return
+  end
+
+  local matcher, matcher_err = build_matcher(search, opts)
+  if not matcher then
+    vim.notify(matcher_err or "Invalid search pattern.", vim.log.levels.WARN)
     return
   end
 
@@ -122,7 +131,8 @@ function M.apply(entries, search, replace_text, opts)
       if not line then
         table.insert(summary.skipped, string.format("%s:%d:%d missing line", filename, lnum, col))
       else
-        local new_line, start_idx, end_idx, err = M.compute_line(line, col, search, replace_text, opts)
+        local new_line, start_idx, end_idx, err =
+          compute_line_with_matcher(matcher, line, col, search, replace_text)
         if new_line then
           lines[lnum] = new_line
           file_applied = file_applied + 1
