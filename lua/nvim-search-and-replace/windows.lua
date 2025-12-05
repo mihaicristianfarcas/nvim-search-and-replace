@@ -3,7 +3,7 @@ local M = {}
 local config = require("nvim-search-and-replace.config")
 
 function M.create_layout()
-	-- Layout - smaller and centered (80% of screen)
+	-- Layout (80% of screen)
 	local width = vim.o.columns
 	local height = vim.o.lines - 2
 

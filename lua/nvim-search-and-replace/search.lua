@@ -5,13 +5,14 @@ local active_job = nil
 local active_token = nil
 local uv = vim.loop
 
--- Each search run gets a unique token. Only callbacks from the latest token are honored
--- This prevents stale job output from mutating UI state after a new search starts
+-- token-based cancellation: each search gets a unique token
+-- only callbacks from the latest token are honored
+-- prevents stale search results from updating ui after new search starts
 local function is_current(token)
 	return token == active_token
 end
 
--- Stop the currently running ripgrep job and invalidate its callbacks
+-- stops the currently running ripgrep job and invalidates its callbacks
 function M.stop_search()
 	if active_job and active_job > 0 then
 		pcall(vim.fn.jobstop, active_job)
@@ -20,7 +21,7 @@ function M.stop_search()
 	active_token = nil
 end
 
--- Async, streaming ripgrep runner with batch callbacks
+-- async streaming ripgrep with batch callbacks for progressive ui updates
 function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	if not search or search == "" then
 		if on_complete then
@@ -37,7 +38,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local batch_size = opts.batch_size or 50
 	local max_results = opts.max_results or 10000
 
-	-- Build command more efficiently
+	-- build ripgrep command with appropriate flags
 	local cmd = {
 		opts.rg_binary or "rg",
 		"--color=never",
@@ -63,11 +64,12 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local batch = {}
 	local result_count = 0
 	local truncated = false
-	local token = uv.hrtime()
+	local token = uv.hrtime() -- unique token for this search
 
-	-- Pre-compile regex pattern for better performance
+	-- pre-compiled pattern for parsing ripgrep output
 	local pattern = "^([^:]+):(%d+):(%d+):(.*)$"
 
+	-- emits accumulated batch to ui callback
 	local function emit_batch()
 		if #batch > 0 and on_results then
 			local emit_batch = batch
@@ -84,21 +86,27 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local job_id = vim.fn.jobstart(cmd, {
 		stdout_buffered = false,
 		on_stdout = function(_, data)
-			if not is_current(token) or not data or truncated then
+			if not is_current(token) or not data then
+				return
+			end
+
+			-- early exit if already hit max results
+			if truncated then
 				return
 			end
 
 			for i = 1, #data do
 				local line = data[i]
 				if line ~= "" then
+					-- check limit before expensive parsing
 					if result_count >= max_results then
 						truncated = true
-						if job_id and job_id > 0 then
-							pcall(vim.fn.jobstop, job_id)
-						end
-						break
+						emit_batch() -- flush remaining results
+						pcall(vim.fn.jobstop, job_id)
+						return -- exit immediately to avoid further processing
 					end
 
+					-- parse ripgrep output line
 					local filename, lnum, col, text = line:match(pattern)
 					if filename then
 						result_count = result_count + 1
@@ -111,6 +119,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 						results[result_count] = result
 						batch[#batch + 1] = result
 
+						-- emit batch when full for progressive ui updates
 						if #batch >= batch_size then
 							emit_batch()
 						end

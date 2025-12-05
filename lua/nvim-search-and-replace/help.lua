@@ -52,9 +52,9 @@ function M.show()
 	-- Disable insert in help window
 	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", false)
 	vim.api.nvim_buf_set_option(state.help_buf, "readonly", true)
-	
+
 	-- Force normal mode when entering the help window
-	vim.api.nvim_create_autocmd({"BufEnter", "WinEnter"}, {
+	vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
 		buffer = state.help_buf,
 		callback = function()
 			vim.cmd("stopinsert")
@@ -64,7 +64,7 @@ function M.show()
 	-- Add syntax highlighting
 	local ns = vim.api.nvim_create_namespace("nvim_search_and_replace_help")
 	vim.api.nvim_buf_add_highlight(state.help_buf, ns, "Title", 1, 0, -1)
-	
+
 	for i = 3, #help_lines - 1 do
 		local line = help_lines[i]
 		if line:match("^  %u") then
@@ -92,7 +92,7 @@ function M.show()
 	for _, key in ipairs(kb.help.keys) do
 		vim.keymap.set("n", key, close_help, { buffer = state.help_buf, noremap = true, silent = true })
 	end
-	
+
 	-- Map all close keys
 	for _, key in ipairs(kb.close.keys) do
 		vim.keymap.set("n", key, close_help, { buffer = state.help_buf, noremap = true, silent = true })
