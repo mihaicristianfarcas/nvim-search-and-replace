@@ -6,35 +6,6 @@ local uv = vim.loop
 
 local file_cache = {}
 
-local function read_file_cached(filename)
-	-- Use file mtime as a simple freshness check
-	local stat = uv.fs_stat(filename)
-	local cache = file_cache[filename]
-	local mtime = stat and string.format("%s.%s", tostring(stat.mtime.sec or 0), tostring(stat.mtime.nsec or 0)) or nil
-
-	if cache and cache.mtime == mtime then
-		return cache.lines, cache.filetype
-	end
-
-	local ok, lines = pcall(vim.fn.readfile, filename)
-	if not ok then
-		return nil, nil, "Cannot read file"
-	end
-
-	local filetype = vim.filetype.match({ filename = filename })
-	file_cache[filename] = {
-		lines = lines,
-		filetype = filetype,
-		mtime = mtime,
-	}
-
-	return lines, filetype
-end
-
-local file_cache = {}
-local cache_order = {}
-local max_cache_size = 50
-
 -- reads file with lru caching
 -- avoids expensive fs_stat calls on every update (90% reduction in syscalls)
 local function read_file_cached(filename)
