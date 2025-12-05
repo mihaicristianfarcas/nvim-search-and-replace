@@ -64,8 +64,15 @@ local function update_preview()
 	preview.update(state.preview_buf, result, state.search_text, state.replace_text, state.use_regex)
 end
 
-local function update_results_list()
-	results.update(state.results_buf, state.results, state.selected_idx, state.selected_items, state.search_text)
+local function update_results_list(start_idx)
+	results.update(
+		state.results_buf,
+		state.results,
+		state.selected_idx,
+		state.selected_items,
+		state.search_text,
+		start_idx
+	)
 end
 
 local function do_search()
