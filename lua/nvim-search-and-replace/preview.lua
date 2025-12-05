@@ -2,6 +2,34 @@
 local M = {}
 
 local replacer = require("nvim-search-and-replace.replace")
+local uv = vim.loop
+
+local file_cache = {}
+
+local function read_file_cached(filename)
+	-- Use file mtime as a simple freshness check
+	local stat = uv.fs_stat(filename)
+	local cache = file_cache[filename]
+	local mtime = stat and string.format("%s.%s", tostring(stat.mtime.sec or 0), tostring(stat.mtime.nsec or 0)) or nil
+
+	if cache and cache.mtime == mtime then
+		return cache.lines, cache.filetype
+	end
+
+	local ok, lines = pcall(vim.fn.readfile, filename)
+	if not ok then
+		return nil, nil, "Cannot read file"
+	end
+
+	local filetype = vim.filetype.match({ filename = filename })
+	file_cache[filename] = {
+		lines = lines,
+		filetype = filetype,
+		mtime = mtime,
+	}
+
+	return lines, filetype
+end
 
 function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	if not preview_buf or not vim.api.nvim_buf_is_valid(preview_buf) then
@@ -17,9 +45,9 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 		return
 	end
 
-	local ok, file_lines = pcall(vim.fn.readfile, result.filename)
-	if not ok then
-		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "Cannot read file" })
+	local file_lines, filetype, err = read_file_cached(result.filename)
+	if not file_lines then
+		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { err or "Cannot read file" })
 		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
 		return
 	end
@@ -87,7 +115,6 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, preview_lines)
 
 	-- Detect filetype and enable syntax highlighting
-	local filetype = vim.filetype.match({ filename = result.filename })
 	if filetype then
 		vim.api.nvim_buf_set_option(preview_buf, "filetype", filetype)
 	end
