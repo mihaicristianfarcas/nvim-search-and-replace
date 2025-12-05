@@ -4,7 +4,7 @@ local config = require("nvim-search-and-replace.config")
 
 function M.setup(state, callbacks)
 	local kb = config.keybindings
-	
+
 	local function map(buf, mode, key, fn)
 		vim.keymap.set(mode, key, fn, { buffer = buf, noremap = true, silent = true })
 	end
@@ -75,7 +75,7 @@ function M.setup(state, callbacks)
 		vim.api.nvim_set_current_win(state.replace_win)
 		vim.cmd("startinsert!")
 	end)
-	
+
 	map(state.search_buf, { "i", "n" }, "<Down>", function()
 		vim.api.nvim_set_current_win(state.replace_win)
 		vim.cmd("startinsert!")
@@ -86,7 +86,7 @@ function M.setup(state, callbacks)
 		vim.api.nvim_set_current_win(state.results_win)
 		vim.cmd("stopinsert")
 	end)
-	
+
 	map(state.replace_buf, { "i", "n" }, "<Down>", function()
 		vim.api.nvim_set_current_win(state.results_win)
 		vim.cmd("stopinsert")
@@ -102,7 +102,7 @@ function M.setup(state, callbacks)
 		vim.api.nvim_set_current_win(state.search_win)
 		vim.cmd("startinsert!")
 	end)
-	
+
 	map(state.results_buf, "n", "<S-Tab>", function()
 		vim.api.nvim_set_current_win(state.replace_win)
 		vim.cmd("startinsert!")
@@ -119,11 +119,11 @@ function M.setup(state, callbacks)
 		map(state.results_buf, "n", key, callbacks.replace_selected)
 		map(state.results_buf, "v", key, callbacks.replace_selected)
 	end
-	
+
 	for _, key in ipairs(kb.open_in_file.keys) do
 		map(state.results_buf, "n", key, callbacks.open_in_file)
 	end
-	
+
 	for _, key in ipairs(kb.replace_all.keys) do
 		map(state.results_buf, "n", key, callbacks.replace_all)
 	end
