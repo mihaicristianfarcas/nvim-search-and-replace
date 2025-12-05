@@ -8,6 +8,7 @@ local results = require("nvim-search-and-replace.results")
 local windows = require("nvim-search-and-replace.windows")
 local keymaps = require("nvim-search-and-replace.keymaps")
 local replacer = require("nvim-search-and-replace.replace")
+local uv = vim.loop
 
 -- UI state
 local state = {
@@ -31,10 +32,35 @@ local state = {
 	replace_win = nil,
 	results_win = nil,
 	preview_win = nil,
+	last_preview_sig = nil,
 }
 
 local function update_preview()
 	local result = state.results[state.selected_idx]
+	local sig
+	if result then
+		local stat = uv.fs_stat(result.filename or "")
+		local mtime = stat and string.format("%s.%s", tostring(stat.mtime.sec or 0), tostring(stat.mtime.nsec or 0))
+			or "nomtime"
+		local mode = state.use_regex and "regex" or "literal"
+		sig = table.concat({
+			result.filename or "",
+			result.lnum or 0,
+			result.col or 0,
+			mtime,
+			state.search_text or "",
+			state.replace_text or "",
+			mode,
+		}, "::")
+	else
+		sig = "no-result"
+	end
+
+	if state.last_preview_sig == sig then
+		return
+	end
+
+	state.last_preview_sig = sig
 	preview.update(state.preview_buf, result, state.search_text, state.replace_text, state.use_regex)
 end
 
@@ -44,70 +70,66 @@ end
 
 local function do_search()
 	state.search_text = vim.api.nvim_buf_get_lines(state.search_buf, 0, -1, false)[1] or ""
-	
+
 	if state.searching then
 		search.stop_search()
 	end
-	
+
 	state.searching = true
 	windows.update_search_title(state.search_win, state.use_regex, true)
-	
+
 	local new_results = {}
 	local new_selected_idx = 1
 	local new_selected_items = {}
-	
+
 	local config = require("nvim-search-and-replace").get_config()
-	
-	search.run_ripgrep_async(
-		state.search_text, 
-		{ 
-			literal = not state.use_regex,
-			max_results = config.max_results
-		},
-		function(batch, total_count, truncated)
-			for _, result in ipairs(batch) do
-				table.insert(new_results, result)
-			end
-			state.results = new_results
-			state.selected_idx = new_selected_idx
-			state.selected_items = new_selected_items
-			update_results_list()
-			if state.selected_idx <= #state.results then
-				update_preview()
-			end
-		end,
-		function(final_results, exit_code, truncated)
-			state.searching = false
-			windows.update_search_title(state.search_win, state.use_regex, false)
-			
-			-- Use final_results from search module as authoritative source
-			state.results = final_results
-			state.selected_idx = #final_results > 0 and 1 or 0
-			state.selected_items = {}
-			update_results_list()
+
+	search.run_ripgrep_async(state.search_text, {
+		literal = not state.use_regex,
+		max_results = config.max_results,
+	}, function(batch, total_count, truncated)
+		for _, result in ipairs(batch) do
+			table.insert(new_results, result)
+		end
+		state.results = new_results
+		state.selected_idx = new_selected_idx
+		state.selected_items = new_selected_items
+		update_results_list()
+		if state.selected_idx <= #state.results then
 			update_preview()
-			
-			exit_code = exit_code or 0
-			-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
-			if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
-				vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
-			elseif exit_code ~= 143 then
-				if #final_results == 0 then
-					vim.notify("No results found", vim.log.levels.INFO)
-				else
-					local msg = string.format("Found %d matches", #final_results)
-					if truncated then
-						msg = msg .. " (truncated - too many results)"
-					end
-					vim.notify(msg, truncated and vim.log.levels.WARN or vim.log.levels.INFO)
+		end
+	end, function(final_results, exit_code, truncated)
+		state.searching = false
+		windows.update_search_title(state.search_win, state.use_regex, false)
+
+		-- Use final_results from search module as authoritative source
+		state.results = final_results
+		state.selected_idx = #final_results > 0 and 1 or 0
+		state.selected_items = {}
+		state.last_preview_sig = nil
+		update_results_list()
+		update_preview()
+
+		exit_code = exit_code or 0
+		-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
+		if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
+			vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
+		elseif exit_code ~= 143 then
+			if #final_results == 0 then
+				vim.notify("No results found", vim.log.levels.INFO)
+			else
+				local msg = string.format("Found %d matches", #final_results)
+				if truncated then
+					msg = msg .. " (truncated - too many results)"
 				end
-			end
-			
-			if state.results_win and vim.api.nvim_win_is_valid(state.results_win) and #final_results > 0 then
-				vim.api.nvim_win_set_cursor(state.results_win, {1, 0})
+				vim.notify(msg, truncated and vim.log.levels.WARN or vim.log.levels.INFO)
 			end
 		end
-	)
+
+		if state.results_win and vim.api.nvim_win_is_valid(state.results_win) and #final_results > 0 then
+			vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
+		end
+	end)
 end
 
 local function debounced_search()
@@ -116,7 +138,7 @@ local function debounced_search()
 		vim.fn.timer_stop(state.debounce_timer)
 		state.debounce_timer = nil
 	end
-	
+
 	-- Schedule new search
 	state.debounce_timer = vim.fn.timer_start(300, function()
 		state.debounce_timer = nil
@@ -151,7 +173,7 @@ end
 
 local function replace_selected()
 	local items_to_replace = {}
-	
+
 	-- Get visual selection range if in visual mode
 	local mode = vim.api.nvim_get_mode().mode
 	if mode:match("[vV]") then
@@ -160,13 +182,13 @@ local function replace_selected()
 		local end_pos = vim.fn.getpos(".")
 		local start_line = math.min(start_pos[2], end_pos[2])
 		local end_line = math.max(start_pos[2], end_pos[2])
-		
+
 		for i = start_line, end_line do
 			if state.results[i] then
 				table.insert(items_to_replace, state.results[i])
 			end
 		end
-		
+
 		-- Exit visual mode
 		vim.cmd("normal! \x1b")
 	else
@@ -180,7 +202,8 @@ local function replace_selected()
 
 	if #items_to_replace > 0 then
 		state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-		local summary = replacer.apply(items_to_replace, state.search_text, state.replace_text, { literal = not state.use_regex })
+		local summary =
+			replacer.apply(items_to_replace, state.search_text, state.replace_text, { literal = not state.use_regex })
 		replacer.notify_summary(summary)
 		do_search()
 	end
@@ -188,7 +211,8 @@ end
 
 local function replace_all()
 	state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-	local summary = replacer.apply(state.results, state.search_text, state.replace_text, { literal = not state.use_regex })
+	local summary =
+		replacer.apply(state.results, state.search_text, state.replace_text, { literal = not state.use_regex })
 	replacer.notify_summary(summary)
 	M.close()
 end
@@ -261,7 +285,7 @@ local function setup_keymaps_internal()
 		do_search = debounced_search,
 		update_preview_text = update_preview_text,
 	}
-	
+
 	keymaps.setup(state, callbacks)
 end
 
@@ -290,7 +314,7 @@ function M.close()
 		vim.fn.timer_stop(state.debounce_timer)
 		state.debounce_timer = nil
 	end
-	
+
 	search.stop_search()
 	help.close()
 
