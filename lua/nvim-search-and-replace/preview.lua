@@ -5,6 +5,8 @@ local replacer = require("nvim-search-and-replace.replace")
 local uv = vim.loop
 
 local file_cache = {}
+local cache_order = {}
+local max_cache_size = 50
 
 -- reads file with lru caching
 -- avoids expensive fs_stat calls on every update (90% reduction in syscalls)
