@@ -10,6 +10,8 @@ local max_cache_size = 50
 local large_file_threshold = 102400 -- 100KB in bytes
 
 -- reads specific line range from file (for large files)
+-- note: reads lines sequentially from start; this is much faster than reading
+-- the entire file even for matches near the end of large files
 local function read_lines_range(filename, start_line, end_line)
 	local lines = {}
 	local file, err = io.open(filename, 'r')
@@ -17,7 +19,7 @@ local function read_lines_range(filename, start_line, end_line)
 		return nil, err or "Failed to open file"
 	end
 	
-	local success = pcall(function()
+	local success, err = pcall(function()
 		local current = 0
 		for line in file:lines() do
 			current = current + 1
@@ -33,7 +35,7 @@ local function read_lines_range(filename, start_line, end_line)
 	file:close()
 	
 	if not success then
-		return nil, "Error reading file"
+		return nil, err or "Error reading file"
 	end
 	
 	return lines
