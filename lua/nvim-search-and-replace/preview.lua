@@ -7,26 +7,35 @@ local uv = vim.loop
 local file_cache = {}
 local cache_order = {}
 local max_cache_size = 50
+local large_file_threshold = 102400 -- 100KB in bytes
 
 -- reads specific line range from file (for large files)
 local function read_lines_range(filename, start_line, end_line)
 	local lines = {}
-	local file = io.open(filename, 'r')
+	local file, err = io.open(filename, 'r')
 	if not file then
-		return nil
+		return nil, err or "Failed to open file"
 	end
 	
-	local current = 0
-	for line in file:lines() do
-		current = current + 1
-		if current >= start_line then
-			table.insert(lines, line)
-			if current >= end_line then
-				break
+	local success = pcall(function()
+		local current = 0
+		for line in file:lines() do
+			current = current + 1
+			if current >= start_line then
+				table.insert(lines, line)
+				if current >= end_line then
+					break
+				end
 			end
 		end
-	end
+	end)
+	
 	file:close()
+	
+	if not success then
+		return nil, "Error reading file"
+	end
+	
 	return lines
 end
 
@@ -40,10 +49,10 @@ local function read_file_cached(filename, start_line, end_line)
 	end
 	
 	-- for large files (>100KB), read only needed range without caching
-	if filesize > 102400 and start_line and end_line then
-		local lines = read_lines_range(filename, start_line, end_line)
+	if filesize > large_file_threshold and start_line and end_line then
+		local lines, err = read_lines_range(filename, start_line, end_line)
 		if not lines then
-			return nil, nil, "Cannot read file"
+			return nil, nil, err or "Cannot read file"
 		end
 		local filetype = vim.filetype.match({ filename = filename })
 		return lines, filetype, start_line
@@ -124,10 +133,9 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	local filesize = vim.fn.getfsize(result.filename)
 	local start_line, end_line
 	
-	if filesize > 102400 then
+	if filesize > large_file_threshold then
 		-- for large files, calculate exact range needed
 		start_line = math.max(1, lnum - context_before)
-		-- we don't know total lines yet, so read a bit more
 		end_line = lnum + context_after
 	end
 	
