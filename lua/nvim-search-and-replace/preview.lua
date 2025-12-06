@@ -8,9 +8,48 @@ local file_cache = {}
 local cache_order = {}
 local max_cache_size = 50
 
--- reads file with lru caching
+-- reads specific line range from file (for large files)
+local function read_lines_range(filename, start_line, end_line)
+	local lines = {}
+	local file = io.open(filename, 'r')
+	if not file then
+		return nil
+	end
+	
+	local current = 0
+	for line in file:lines() do
+		current = current + 1
+		if current >= start_line then
+			table.insert(lines, line)
+			if current >= end_line then
+				break
+			end
+		end
+	end
+	file:close()
+	return lines
+end
+
+-- reads file with lru caching for small files, partial reading for large files
 -- avoids expensive fs_stat calls on every update (90% reduction in syscalls)
-local function read_file_cached(filename)
+local function read_file_cached(filename, start_line, end_line)
+	-- check file size to determine strategy
+	local filesize = vim.fn.getfsize(filename)
+	if filesize < 0 then
+		return nil, nil, "Cannot read file"
+	end
+	
+	-- for large files (>100KB), read only needed range without caching
+	if filesize > 102400 and start_line and end_line then
+		local lines = read_lines_range(filename, start_line, end_line)
+		if not lines then
+			return nil, nil, "Cannot read file"
+		end
+		local filetype = vim.filetype.match({ filename = filename })
+		return lines, filetype, start_line
+	end
+	
+	-- for small files, use existing caching strategy
 	local cached = file_cache[filename]
 
 	-- fast path: cache hit with lru update
@@ -65,13 +104,6 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 		return
 	end
 
-	local file_lines, filetype, err = read_file_cached(result.filename)
-	if not file_lines then
-		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { err or "Cannot read file" })
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
-		return
-	end
-
 	-- get preview window height to calculate centering
 	local preview_win = nil
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -87,8 +119,34 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	local lnum = result.lnum
 	local context_before = context_lines
 	local context_after = context_lines
-	local start_line = math.max(1, lnum - context_before)
-	local end_line = math.min(#file_lines, lnum + context_after)
+	
+	-- calculate range before reading (for partial file reading)
+	local filesize = vim.fn.getfsize(result.filename)
+	local start_line, end_line
+	
+	if filesize > 102400 then
+		-- for large files, calculate exact range needed
+		start_line = math.max(1, lnum - context_before)
+		-- we don't know total lines yet, so read a bit more
+		end_line = lnum + context_after
+	end
+	
+	local file_lines, filetype, offset = read_file_cached(result.filename, start_line, end_line)
+	if not file_lines then
+		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { filetype or "Cannot read file" })
+		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+		return
+	end
+
+	-- adjust calculations based on whether we read the full file or a partial range
+	if not offset then
+		-- full file read (small file or cached)
+		start_line = math.max(1, lnum - context_before)
+		end_line = math.min(#file_lines, lnum + context_after)
+	else
+		-- partial file read (large file)
+		end_line = math.min(offset + #file_lines - 1, lnum + context_after)
+	end
 
 	local preview_lines = {}
 	local before_line_idx = nil
@@ -106,7 +164,9 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 
 	-- show context with > / < indicators (like git diffs)
 	for i = start_line, end_line do
-		local line = file_lines[i] or ""
+		-- calculate the correct index into file_lines array
+		local line_idx = offset and (i - offset + 1) or i
+		local line = file_lines[line_idx] or ""
 		local prefix = string.format("%4d │", i)
 
 		if i == lnum and replace_text ~= "" then
