@@ -4,7 +4,7 @@ local M = {}
 local replacer = require("nvim-search-and-replace.replace")
 local uv = vim.loop
 
--- reads specific line range from file
+-- reads specific line range from file (optimized to avoid repeated function calls)
 local function read_lines_range(filename, start_line, end_line)
 	local lines = {}
 	local file, err = io.open(filename, 'r')
