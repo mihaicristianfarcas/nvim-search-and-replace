@@ -4,49 +4,45 @@ local M = {}
 local replacer = require("nvim-search-and-replace.replace")
 local uv = vim.loop
 
-local file_cache = {}
-local cache_order = {}
-local max_cache_size = 50
-
--- reads file with lru caching
--- avoids expensive fs_stat calls on every update (90% reduction in syscalls)
-local function read_file_cached(filename)
-	local cached = file_cache[filename]
-
-	-- fast path: cache hit with lru update
-	if cached then
-		-- move to front (most recently used)
-		for i, name in ipairs(cache_order) do
-			if name == filename then
-				table.remove(cache_order, i)
-				break
+-- reads specific line range from file (optimized to avoid repeated function calls)
+local function read_lines_range(filename, start_line, end_line)
+	local lines = {}
+	local file, err = io.open(filename, 'r')
+	if not file then
+		return nil, err or "Failed to open file"
+	end
+	
+	local file_lines = file:lines()
+	local success, err = pcall(function()
+		local current = 0
+		for line in file_lines do
+			current = current + 1
+			if current >= start_line then
+				table.insert(lines, line)
+				if current >= end_line then
+					break
+				end
 			end
 		end
-		table.insert(cache_order, 1, filename)
-		return cached.lines, cached.filetype
+	end)
+	
+	file:close()
+	
+	if not success then
+		return nil, err or "Error reading file"
 	end
+	
+	return lines
+end
 
-	-- cache miss: read file
-	local ok, lines = pcall(vim.fn.readfile, filename)
-	if not ok then
-		return nil, nil, "Cannot read file"
+-- reads file using partial line reading
+local function read_file_cached(filename, start_line, end_line)
+	local lines, err = read_lines_range(filename, start_line, end_line)
+	if not lines then
+		return nil, nil, err or "Cannot read file"
 	end
-
-	-- evict oldest if cache is full
-	if #cache_order >= max_cache_size then
-		local evict = table.remove(cache_order)
-		file_cache[evict] = nil
-	end
-
-	-- cache new entry
 	local filetype = vim.filetype.match({ filename = filename })
-	file_cache[filename] = {
-		lines = lines,
-		filetype = filetype,
-	}
-	table.insert(cache_order, 1, filename)
-
-	return lines, filetype
+	return lines, filetype, start_line
 end
 
 -- updates preview pane with before/after comparison
@@ -61,13 +57,6 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 
 	if not result then
 		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "No selection" })
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
-		return
-	end
-
-	local file_lines, filetype, err = read_file_cached(result.filename)
-	if not file_lines then
-		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { err or "Cannot read file" })
 		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
 		return
 	end
@@ -87,8 +76,20 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 	local lnum = result.lnum
 	local context_before = context_lines
 	local context_after = context_lines
+	
+	-- calculate range for partial file reading
 	local start_line = math.max(1, lnum - context_before)
-	local end_line = math.min(#file_lines, lnum + context_after)
+	local end_line = lnum + context_after
+	
+	local file_lines, filetype, offset = read_file_cached(result.filename, start_line, end_line)
+	if not file_lines then
+		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { filetype or "Cannot read file" })
+		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+		return
+	end
+
+	-- adjust end_line based on how many lines were actually read
+	end_line = math.min(offset + #file_lines - 1, lnum + context_after)
 
 	local preview_lines = {}
 	local before_line_idx = nil
@@ -106,7 +107,9 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 
 	-- show context with > / < indicators (like git diffs)
 	for i = start_line, end_line do
-		local line = file_lines[i] or ""
+		-- calculate the correct index into file_lines array
+		local line_idx = i - offset + 1
+		local line = file_lines[line_idx] or ""
 		local prefix = string.format("%4d │", i)
 
 		if i == lnum and replace_text ~= "" then
