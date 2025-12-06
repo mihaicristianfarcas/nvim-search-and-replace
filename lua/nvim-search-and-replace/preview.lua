@@ -41,9 +41,11 @@ end
 
 -- reads file with lru caching for small files, partial reading for large files
 -- avoids expensive fs_stat calls on every update (90% reduction in syscalls)
-local function read_file_cached(filename, start_line, end_line)
+local function read_file_cached(filename, start_line, end_line, filesize)
 	-- check file size to determine strategy
-	local filesize = vim.fn.getfsize(filename)
+	if not filesize then
+		filesize = vim.fn.getfsize(filename)
+	end
 	if filesize < 0 then
 		return nil, nil, "Cannot read file"
 	end
@@ -139,7 +141,7 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex)
 		end_line = lnum + context_after
 	end
 	
-	local file_lines, filetype, offset = read_file_cached(result.filename, start_line, end_line)
+	local file_lines, filetype, offset = read_file_cached(result.filename, start_line, end_line, filesize)
 	if not file_lines then
 		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { filetype or "Cannot read file" })
 		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
