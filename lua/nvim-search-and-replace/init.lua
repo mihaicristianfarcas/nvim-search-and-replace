@@ -2,10 +2,10 @@ local M = {}
 
 -- Default configuration
 local defaults = {
-	rg_binary = "rg",
 	literal = true, -- Use ripgrep --fixed-strings for exact matching
 	smart_case = true, -- Case insensitive unless uppercase is used
 	max_results = 10000, -- Maximum number of search results to display
+	max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
 }
 
 local config = vim.deepcopy(defaults)

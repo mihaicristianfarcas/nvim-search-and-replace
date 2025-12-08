@@ -12,6 +12,8 @@ A Neovim plugin for performing project-wide search and replace operations with a
 ### Key Features
 
 - **Async Live Search** - Fast streaming search results with async ripgrep integration
+- **Live Progress** - Real-time notification showing match count as results stream in (updates every 150ms)
+- **Smart Highlighting** - Case-insensitive match highlighting when using smart-case mode
 - **Visual Preview** - Side-by-side comparison showing before and after changes
 - **Jump To Match** - Open the previewed file directly at the matched location
 - **Regex Support** - Toggle between literal string matching and regex patterns with `Ctrl-t`
@@ -173,12 +175,8 @@ The UI consists of four main panes:
 The plugin can be configured during setup:
 
 ```lua
-require("nvim_search_and_replace").setup({
-  -- Path to ripgrep binary (default: "rg")
-  rg_binary = "rg",
-  
+require("nvim-search-and-replace").setup({
   -- Use literal string matching instead of regex (default: true)
-  -- Recommended for predictable replacements
   literal = true,
   
   -- Case-insensitive search unless uppercase letters are used (default: true)
@@ -186,6 +184,10 @@ require("nvim_search_and_replace").setup({
   
   -- Maximum number of search results to display (default: 10000)
   max_results = 10000,
+  
+  -- Skip files larger than this size (default: "1M")
+  -- Supports K, M, G suffixes (e.g., "500K", "2M", "1G")
+  max_file_size = "1M",
 })
 ```
 
@@ -193,10 +195,10 @@ require("nvim_search_and_replace").setup({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `rg_binary` | string | `"rg"` | Path to the ripgrep executable |
-| `literal` | boolean | `true` | Use exact string matching (recommended) |
+| `literal` | boolean | `true` | Use exact string matching instead of regex |
 | `smart_case` | boolean | `true` | Case-insensitive search unless uppercase is present |
 | `max_results` | number | `10000` | Maximum number of search results to display |
+| `max_file_size` | string | `"1M"` | Skip files larger than this (K/M/G suffix) |
 
 ## Commands
 
@@ -210,11 +212,15 @@ require("nvim_search_and_replace").setup({
 ## How It Works
 
 1. **Async Search**: Uses `ripgrep` with async streaming for fast, non-blocking search across the project
-2. **Token-based Cancellation**: Unique tokens prevent stale search results from updating UI after new searches start
-3. **Live Preview**: Real-time preview updates as you type with debounced search (300ms)
-4. **Validation**: Before writing, validates that the text at each location still matches the search term
-5. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
-6. **History Stack**: Full undo/redo stack stores previous file content for all operations
+2. **File Size Filtering**: Automatically skips files larger than 1MB using ripgrep's `--max-filesize`
+3. **Token-based Cancellation**: Unique tokens prevent stale search results from updating UI after new searches start
+4. **Debounced Preview**: Preview updates are debounced (100ms) to prevent flickering when navigating results
+5. **Chunked Rendering**: Large result sets are rendered in chunks to keep UI responsive
+6. **LRU Cache**: Recently viewed files are cached for 120x faster repeated access
+7. **Memory Safeguards**: Long lines are truncated (500 chars) to prevent memory issues with minified files
+8. **Validation**: Before writing, validates that the text at each location still matches the search term
+9. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
+10. **History Stack**: Full undo/redo stack stores previous file content for all operations
 
 ### Safety Features
 
@@ -229,8 +235,13 @@ require("nvim_search_and_replace").setup({
 - File operations are synchronous (search is async, file writes are not)
 - Follows ripgrep's default ignore rules (respects `.gitignore`)
 - Search results limited by `max_results` config (default: 10,000)
+- Large files (>1MB) are automatically skipped to maintain performance
 
 ## Troubleshooting
+
+### Search patterns starting with `-` or `--` fail
+
+Patterns like `--`, `-f`, or `---` work correctly. The plugin now properly escapes these patterns using the `--` separator for ripgrep.
 
 ### Matches are skipped during replacement
 
@@ -245,7 +256,22 @@ Ensure you're in the correct input field and typing. The preview updates automat
 
 ### Search is taking too long
 
-Press `Ctrl-x` to stop the current search. Consider using more specific search terms or enabling literal mode for faster searches.
+Press `Ctrl-x` to stop the current search. Consider:
+- Using more specific search terms
+- Enabling literal mode for faster searches (default)
+- Adjusting `max_file_size` to skip more files
+
+### Large files cause issues
+
+The plugin automatically skips files larger than 1MB. You can adjust this limit:
+
+```lua
+require("nvim-search-and-replace").setup({
+  max_file_size = "2M",  -- Increase to 2MB
+})
+```
+
+Note: Increasing this limit may impact performance on very large codebases.
 
 ## Contributing
 

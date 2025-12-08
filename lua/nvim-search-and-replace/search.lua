@@ -35,18 +35,20 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	M.stop_search()
 
 	opts = opts or {}
-	local batch_size = opts.batch_size or 50
+	local batch_size = opts.batch_size or 25
 	local max_results = opts.max_results or 10000
+	local max_file_size = opts.max_file_size or "1M"
 
 	-- build ripgrep command with appropriate flags
 	local cmd = {
-		opts.rg_binary or "rg",
+		"rg",
 		"--color=never",
 		"--no-heading",
 		"--line-number",
 		"--column",
 		"--vimgrep",
 		"--sort=path",
+		"--max-filesize=" .. max_file_size,
 	}
 
 	if opts.literal == true then
@@ -57,6 +59,8 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 		cmd[#cmd + 1] = "--smart-case"
 	end
 
+	-- add -- to separate flags from search pattern (important for patterns starting with -)
+	cmd[#cmd + 1] = "--"
 	cmd[#cmd + 1] = search
 	cmd[#cmd + 1] = opts.cwd or uv.cwd()
 
@@ -110,6 +114,12 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 					local filename, lnum, col, text = line:match(pattern)
 					if filename then
 						result_count = result_count + 1
+						
+						-- truncate text to prevent memory issues with very long lines
+						if text and #text > 500 then
+							text = text:sub(1, 500) .. "..."
+						end
+						
 						local result = {
 							filename = filename,
 							lnum = tonumber(lnum),

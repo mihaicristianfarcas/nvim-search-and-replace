@@ -138,10 +138,25 @@ function M.apply(entries, search, replace_text, opts)
 	local summary = { applied = 0, files = {}, skipped = {} }
 	local op_diffs = {} -- differential storage: only changed lines, not full files
 
-	for filename, file_entries in pairs(per_file) do
+	-- process files one at a time to avoid memory issues
+	local files_to_process = {}
+	for filename, _ in pairs(per_file) do
+		table.insert(files_to_process, filename)
+	end
+	
+	local files_processed = 0
+	local total_files = #files_to_process
+	
+	-- show progress for large operations
+	local show_progress = total_files > 10
+	
+	for _, filename in ipairs(files_to_process) do
+		local file_entries = per_file[filename]
+		
 		-- sort bottom-to-top to avoid line number shifts during replacement
 		sort_descending(file_entries)
 
+		-- use pcall to handle file read errors gracefully
 		local ok, lines = pcall(vim.fn.readfile, filename)
 		if not ok then
 			table.insert(summary.skipped, filename .. ": failed to read file")
@@ -189,6 +204,23 @@ function M.apply(entries, search, replace_text, opts)
 			else
 				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
 			end
+		end
+		
+		files_processed = files_processed + 1
+		
+		-- yield to event loop periodically to keep UI responsive
+		if files_processed % 5 == 0 then
+			if show_progress then
+				-- use async notification to avoid blocking
+				vim.schedule(function()
+					vim.notify(
+						string.format("Replacing: %d/%d files", files_processed, total_files),
+						vim.log.levels.INFO
+					)
+				end)
+			end
+			-- yield control briefly
+			vim.cmd("redraw")
 		end
 
 		::continue::

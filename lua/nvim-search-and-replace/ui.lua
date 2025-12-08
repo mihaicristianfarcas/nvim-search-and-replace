@@ -61,17 +61,21 @@ local function update_preview()
 	end
 
 	state.last_preview_sig = sig
-	preview.update(state.preview_buf, result, state.search_text, state.replace_text, state.use_regex)
+	local config = require("nvim-search-and-replace").get_config()
+	preview.update(state.preview_buf, result, state.search_text, state.replace_text, state.use_regex, config.smart_case)
 end
 
 local function update_results_list(start_idx)
+	local config = require("nvim-search-and-replace").get_config()
 	results.update(
 		state.results_buf,
 		state.results,
 		state.selected_idx,
 		state.selected_items,
 		state.search_text,
-		start_idx
+		start_idx,
+		config.smart_case,
+		state.use_regex  -- pass regex mode for proper highlighting
 	)
 end
 
@@ -86,25 +90,58 @@ local function do_search(opts)
 	state.searching = true
 	windows.update_search_title(state.search_win, state.use_regex, true)
 
+	-- reset state for new search
 	local new_results = {}
 	local new_selected_idx = 1
 	local new_selected_items = {}
+	local last_update_time = 0
+	local last_notify_time = 0
+	local pending_update = false
 
 	local config = require("nvim-search-and-replace").get_config()
 
 	search.run_ripgrep_async(state.search_text, {
 		literal = not state.use_regex,
 		max_results = config.max_results,
+		max_file_size = config.max_file_size,
 	}, function(batch, total_count, truncated)
+		-- add new results to accumulator
 		for _, result in ipairs(batch) do
 			table.insert(new_results, result)
 		end
-		state.results = new_results
-		state.selected_idx = new_selected_idx
-		state.selected_items = new_selected_items
-		update_results_list()
-		if state.selected_idx <= #state.results then
-			update_preview()
+		
+		-- throttle UI updates to every 50ms to avoid blocking
+		local now = vim.loop.now()
+		if not pending_update and (now - last_update_time) > 50 then
+			pending_update = true
+			last_update_time = now
+			
+			vim.schedule(function()
+				pending_update = false
+				state.results = new_results
+				state.selected_idx = new_selected_idx
+				state.selected_items = new_selected_items
+				
+				-- use incremental rendering
+				update_results_list()
+				
+				if state.selected_idx <= #state.results then
+					update_preview()
+				end
+				
+				-- show progress notification every 150ms
+				if (now - last_notify_time) > 150 then
+					last_notify_time = now
+					local msg = string.format("Searching... %d matches found", #new_results)
+					if truncated then
+						msg = msg .. " (limit reached)"
+					end
+					vim.notify(msg, vim.log.levels.INFO, {
+						timeout = 1000,
+						replace = true,  -- replace previous notification
+					})
+				end
+			end)
 		end
 	end, function(final_results, exit_code, truncated)
 		state.searching = false
@@ -121,16 +158,18 @@ local function do_search(opts)
 		-- Suppress notifications if requested (e.g., after undo/redo)
 		if not opts.silent then
 			exit_code = exit_code or 0
+			
 			-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
 			if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
 				vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
 			elseif exit_code ~= 143 then
 				if #final_results == 0 then
 					vim.notify("No results found", vim.log.levels.INFO)
-				else
+				elseif truncated or #final_results < 10 then
+					-- Only notify on truncation or very few results
 					local msg = string.format("Found %d matches", #final_results)
 					if truncated then
-						msg = msg .. " (truncated - too many results)"
+						msg = msg .. " (truncated)"
 					end
 					vim.notify(msg, truncated and vim.log.levels.WARN or vim.log.levels.INFO)
 				end
