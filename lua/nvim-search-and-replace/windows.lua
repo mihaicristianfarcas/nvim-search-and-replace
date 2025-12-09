@@ -25,11 +25,10 @@ function M.create_layout()
 	}
 end
 
-function M.create_windows(layout, buffers, use_regex)
+function M.create_windows(layout, buffers)
 	local windows = {}
 
 	-- Search input (top left)
-	local search_title = use_regex and " Search (Regex) " or " Search (Literal) "
 	windows.search = vim.api.nvim_open_win(buffers.search, true, {
 		relative = "editor",
 		width = layout.left_width - 2,
@@ -38,7 +37,7 @@ function M.create_windows(layout, buffers, use_regex)
 		col = layout.start_col,
 		style = "minimal",
 		border = "rounded",
-		title = search_title,
+		title = "Search regex",
 		title_pos = "center",
 	})
 
@@ -51,7 +50,7 @@ function M.create_windows(layout, buffers, use_regex)
 		col = layout.start_col,
 		style = "minimal",
 		border = "rounded",
-		title = " Replace ",
+		title = "Replace",
 		title_pos = "center",
 	})
 
@@ -66,7 +65,7 @@ function M.create_windows(layout, buffers, use_regex)
 		col = layout.start_col,
 		style = "minimal",
 		border = "rounded",
-		title = " Results (Press " .. help_keys .. " for help) ",
+		title = "Results (Press " .. help_keys .. " for help)",
 		title_pos = "center",
 	})
 
@@ -79,7 +78,7 @@ function M.create_windows(layout, buffers, use_regex)
 		col = layout.start_col + layout.left_width,
 		style = "minimal",
 		border = "rounded",
-		title = " Preview ",
+		title = "Preview",
 		title_pos = "center",
 	})
 
@@ -93,11 +92,10 @@ function M.create_windows(layout, buffers, use_regex)
 	return windows
 end
 
-function M.update_search_title(search_win, use_regex, searching)
+function M.update_search_title(search_win, searching)
 	if search_win and vim.api.nvim_win_is_valid(search_win) then
-		local mode = use_regex and "Regex" or "Literal"
 		local status = searching and " [Searching...] " or " "
-		local title = " Search (" .. mode .. ")" .. status
+		local title = "Search regex" .. status
 		vim.api.nvim_win_set_config(search_win, { title = title })
 	end
 end

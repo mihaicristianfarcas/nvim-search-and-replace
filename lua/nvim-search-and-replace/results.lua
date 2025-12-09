@@ -1,14 +1,16 @@
 -- Results module - handles results list display and highlighting
+-- Uses ripgrep JSON output for precise match highlighting
+-- Implements chunked rendering and highlighting for responsive UI with large result sets
 local M = {}
 
-local RENDER_CHUNK_SIZE = 200 -- render in chunks to avoid blocking UI
-local HIGHLIGHT_CHUNK_SIZE = 500 -- apply highlights in chunks
-local MAX_TEXT_DISPLAY = 120 -- limit displayed text length per result
+local RENDER_CHUNK_SIZE = 200   -- Render in chunks to avoid blocking UI
+local HIGHLIGHT_CHUNK_SIZE = 500 -- Apply highlights in chunks
+local MAX_TEXT_DISPLAY = 120     -- Limit displayed text length per result
 
--- updates results list buffer with search matches
--- supports incremental updates for better performance
--- start_idx controls incremental updates: 1 = full redraw, >1 = append-only
-function M.update(results_buf, results, selected_idx, selected_items, search_text, start_idx, smart_case, use_regex)
+-- Updates results list buffer with search matches
+-- Supports incremental updates for better performance with streaming results
+-- @param start_idx: controls incremental updates (1 = full redraw, >1 = append-only)
+function M.update(results_buf, results, selected_idx, selected_items, search_text, start_idx, smart_case)
 	if not results_buf or not vim.api.nvim_buf_is_valid(results_buf) then
 		return
 	end
@@ -19,13 +21,12 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 
 	start_idx = start_idx or 1
 	search_text = search_text or ""
-	smart_case = smart_case ~= false  -- default to true
-	use_regex = use_regex or false  -- default to literal mode
+	smart_case = smart_case ~= false  -- Default to true
 
 	local cwd = vim.loop.cwd()
 	local ns = vim.api.nvim_create_namespace("nvim_search_and_replace_selection")
 
-	-- build only the new lines that need to be written
+	-- Build only the new lines that need to be written
 	local new_lines = {}
 	for i = start_idx, #results do
 		local result = results[i]
@@ -99,26 +100,32 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 	set_lines_chunked(results_buf, insert_at, insert_at, new_lines, function()
 		vim.bo[results_buf].modifiable = false
 		
-		-- apply highlights in chunks to avoid blocking
-		M.apply_highlights_async(results_buf, new_lines, search_text, full_refresh and 0 or insert_at, ns, smart_case, use_regex)
+		-- Apply highlights in chunks to avoid blocking
+		local results_to_highlight = {}
+		for i = start_idx, #results do
+			results_to_highlight[#results_to_highlight + 1] = results[i]
+		end
+		M.apply_highlights_async(results_buf, new_lines, results_to_highlight, search_text, full_refresh and 0 or insert_at, ns, smart_case)
 	end)
 end
 
--- apply highlights asynchronously in chunks
-function M.apply_highlights_async(results_buf, lines, search_text, base_idx, ns, smart_case, use_regex)
+-- Applies highlights asynchronously in chunks to avoid UI blocking
+-- Uses exact match_text and match_len from ripgrep JSON output for precise highlighting
+--
+-- @param results_data: array of result objects with match_text and match_len fields
+function M.apply_highlights_async(results_buf, lines, results_data, search_text, base_idx, ns, smart_case)
 	if not vim.api.nvim_buf_is_valid(results_buf) then
 		return
 	end
 	
-	smart_case = smart_case ~= false  -- default to true
-	use_regex = use_regex or false  -- default to literal
+	smart_case = smart_case ~= false  -- Default to true
 	local highlights = {}
 	
-	-- determine if search should be case-insensitive (only for literal mode)
-	local case_insensitive = not use_regex and smart_case and search_text == search_text:lower()
+	-- Determine if search should be case-insensitive
+	local case_insensitive = smart_case and search_text == search_text:lower()
 	
-	-- collect all highlight positions
-	local function collect_highlights(line, line_idx)
+	-- Collect all highlight positions
+	local function collect_highlights(line, line_idx, result)
 		-- highlight filename (before first colon)
 		local filename_end = line:find(":")
 		if not filename_end then
@@ -153,20 +160,22 @@ function M.apply_highlights_async(results_buf, lines, search_text, base_idx, ns,
 		if search_text ~= "" then
 			local search_in = line:sub(third_colon + 1)
 			
-			if use_regex then
-				-- regex mode: use vim regex for highlighting
-				local ok, matches = pcall(vim.fn.matchstrpos, search_in, search_text)
-				if ok and matches[2] ~= -1 then
-					local abs_start = third_colon + matches[2] + 1
+			if result and result.match_text and result.match_len then
+				-- Use exact match info from ripgrep JSON output
+				-- Find where the match appears in the displayed text
+				local match_text = result.match_text
+				local match_start = search_in:find(match_text, 1, true)
+				if match_start then
+					local abs_start = third_colon + match_start
 					table.insert(highlights, {
 						group = "Search",
 						line = line_idx,
 						col_start = abs_start - 1,
-						col_end = abs_start - 1 + #matches[1],
+						col_end = abs_start - 1 + result.match_len,
 					})
 				end
 			elseif case_insensitive then
-				-- literal case-insensitive
+				-- Case-insensitive
 				local search_lower = search_text:lower()
 				local line_lower = search_in:lower()
 				local pos = 1
@@ -185,7 +194,7 @@ function M.apply_highlights_async(results_buf, lines, search_text, base_idx, ns,
 					pos = match_end + 1
 				end
 			else
-				-- literal case-sensitive
+				-- Case-sensitive
 				local match_start = search_in:find(search_text, 1, true)
 				if match_start then
 					local abs_start = third_colon + match_start
@@ -202,7 +211,8 @@ function M.apply_highlights_async(results_buf, lines, search_text, base_idx, ns,
 	
 	-- collect all highlights
 	for i, line in ipairs(lines) do
-		collect_highlights(line, base_idx + i - 1)
+		local result = results_data and results_data[i]
+		collect_highlights(line, base_idx + i - 1, result)
 	end
 	
 	-- apply highlights in chunks

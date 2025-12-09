@@ -24,7 +24,6 @@ M.keybindings = {
 	},
 	replace_all = { keys = { "<C-a>" }, description = "Replace ALL matches" },
 	open_in_file = { keys = { "o" }, description = "Open current result in file", context = "in results" },
-	toggle_regex = { keys = { "<C-t>" }, description = "Toggle regex/literal mode" },
 	stop_search = { keys = { "<C-x>" }, description = "Stop/abort current search" },
 	undo = { keys = { "u", "<C-z>" }, description = "Undo last replacement" },
 	redo = { keys = { "<C-r>", "<C-S-z>" }, description = "Redo last replacement" },
@@ -85,11 +84,6 @@ function M.get_help_lines()
 			" ",
 			28 - #(M.format_keys(kb.open_in_file.keys) .. " (in results)")
 		) .. "- " .. kb.open_in_file.description,
-		"    "
-			.. M.format_keys(kb.toggle_regex.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.toggle_regex.keys))
-			.. "- "
-			.. kb.toggle_regex.description,
 		"    "
 			.. M.format_keys(kb.stop_search.keys)
 			.. string.rep(" ", 28 - #M.format_keys(kb.stop_search.keys))

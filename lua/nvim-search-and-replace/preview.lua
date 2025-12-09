@@ -1,23 +1,26 @@
--- Preview module - handles preview window updates
+-- Preview module - handles preview window updates with context and before/after comparison
+-- Uses ripgrep JSON match information for precise highlighting in regex mode
+-- Implements file caching and debouncing for smooth navigation
 local M = {}
 
 local replacer = require("nvim-search-and-replace.replace")
 local uv = vim.loop
 
--- Simple cache for file content (stores last 5 files)
+-- Simple LRU cache for file content (stores last 5 files)
 local file_cache = {}
 local cache_order = {}
 local MAX_CACHE_SIZE = 5
-local MAX_CONTEXT_LINES = 100
-local MAX_LINE_LENGTH = 500
+local MAX_CONTEXT_LINES = 100  -- Maximum lines of context around match
+local MAX_LINE_LENGTH = 500    -- Truncate very long lines
 
 -- Single debounce timer - only one preview operation at a time
 local preview_timer = nil
 local pending_preview = nil
 
--- reads specific line range from file synchronously but efficiently
+-- Reads specific line range from file with caching for performance
+-- @return lines array, starting line number
 local function read_lines_range(filename, start_line, end_line)
-	-- check cache first
+	-- Check cache first
 	local cache_key = filename
 	if file_cache[cache_key] then
 		local cached_lines = {}
@@ -78,8 +81,10 @@ local function read_lines_range(filename, start_line, end_line)
 	return lines, start_line
 end
 
--- performs the actual preview update synchronously
-local function do_preview_update(preview_buf, result, search_text, replace_text, use_regex, smart_case)
+-- Performs the actual preview update synchronously
+-- Shows before/after comparison with context lines
+-- Highlights exact matches using ripgrep JSON match information
+local function do_preview_update(preview_buf, result, search_text, replace_text, smart_case)
 	if not vim.api.nvim_buf_is_valid(preview_buf) then
 		return
 	end
@@ -91,8 +96,8 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 		return
 	end
 
-	smart_case = smart_case ~= false -- default to true
-	-- determine if search should be case-insensitive
+	smart_case = smart_case ~= false -- Default to true
+	-- Determine if search should be case-insensitive
 	local case_insensitive = smart_case and search_text == search_text:lower()
 
 	-- get preview window
@@ -144,7 +149,7 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 
 		if i == lnum and replace_text ~= "" then
 			local new_line =
-				replacer.compute_line(line, result.col, search_text, replace_text, { literal = not use_regex })
+				replacer.compute_line(line, result.col, search_text, replace_text, result.match_text, result.match_len)
 
 			table.insert(preview_lines, "")
 			table.insert(preview_lines, "      >>>>>>")
@@ -203,30 +208,28 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 				local is_matched_line = (i == matched_line_idx)
 				local content = line:sub(content_offset + 1)
 
-				if use_regex then
-					-- regex mode: highlight entire line content (can't reliably map ripgrep regex to vim regex)
-					-- highlight the specific matched line more prominently
+				if result and result.match_text and result.match_len then
+					-- Use exact match info from ripgrep JSON output
+					-- Only highlight on the actual matched line
 					if is_matched_line then
-						vim.api.nvim_buf_add_highlight(
-							preview_buf,
-							ns,
-							"IncSearch",
-							i - 1,
-							content_offset,
-							-1
-						)
-					else
-						vim.api.nvim_buf_add_highlight(
-							preview_buf,
-							ns,
-							"CursorLine",
-							i - 1,
-							content_offset,
-							-1
-						)
+						local match_text = result.match_text
+						-- Find the match in the content
+						local match_start = content:find(match_text, 1, true)
+						if match_start then
+							local abs_start = content_offset + match_start
+							
+							vim.api.nvim_buf_add_highlight(
+								preview_buf,
+								ns,
+								"IncSearch",
+								i - 1,
+								abs_start - 1,
+								abs_start - 1 + result.match_len
+							)
+						end
 					end
 				elseif case_insensitive then
-					-- literal case-insensitive highlighting
+					-- Case-insensitive highlighting
 					local search_lower = search_text:lower()
 					local content_lower = content:lower()
 					local pos = 1
@@ -252,7 +255,7 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 						pos = match_end + 1
 					end
 				else
-					-- literal case-sensitive highlighting
+					-- Case-sensitive highlighting
 					local search_start = 1
 
 					while true do
@@ -289,23 +292,22 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 	end
 end
 
--- debounced preview update
-function M.update(preview_buf, result, search_text, replace_text, use_regex, smart_case)
-	-- cancel any pending preview
+-- Debounces by 50ms to smooth out UI updates when scrolling through results
+function M.update(preview_buf, result, search_text, replace_text, smart_case)
+	-- Cancel any pending preview
 	if preview_timer then
 		vim.fn.timer_stop(preview_timer)
 		preview_timer = nil
 	end
 
-	smart_case = smart_case ~= false -- default to true
+	smart_case = smart_case ~= false -- Default to true
 
-	-- store the pending preview params
+	-- Store the pending preview params
 	pending_preview = {
 		buf = preview_buf,
 		result = result,
 		search = search_text,
 		replace = replace_text,
-		regex = use_regex,
 		smart_case = smart_case,
 	}
 
@@ -318,7 +320,7 @@ function M.update(preview_buf, result, search_text, replace_text, use_regex, sma
 
 			-- run in vim.schedule to yield control
 			vim.schedule(function()
-				do_preview_update(p.buf, p.result, p.search, p.replace, p.regex, p.smart_case)
+				do_preview_update(p.buf, p.result, p.search, p.replace, p.smart_case)
 			end)
 		end
 	end)

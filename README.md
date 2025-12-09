@@ -16,12 +16,12 @@ A Neovim plugin for performing project-wide search and replace operations with a
 - **Smart Highlighting** - Case-insensitive match highlighting when using smart-case mode
 - **Visual Preview** - Side-by-side comparison showing before and after changes
 - **Jump To Match** - Open the previewed file directly at the matched location
-- **Regex Support** - Toggle between literal string matching and regex patterns with `Ctrl-t`
+- **Regex Support** - Full regex pattern support powered by ripgrep (PCRE2 syntax)
 - **Selective Replacement** - Mark specific items or replace all matches at once
 - **Pre-filled Search** - Open with visual selection, search pattern (`*`), or word under cursor
 - **Safe Replacements** - Validates exact text matches before writing to prevent unintended modifications
 - **Undo/Redo** - Full undo/redo stack for all replacement operations
-- **Syntax Highlighting** - Color-coded filenames, line numbers, and matched text
+- **Syntax Highlighting** - Color-coded filenames, line numbers, and precise match highlighting
 - **Search Cancellation** - Stop long-running searches with `Ctrl-x`
 - **Built-in Help** - Press `?` or `F1` for keybinding reference
 
@@ -45,7 +45,6 @@ A Neovim plugin for performing project-wide search and replace operations with a
   opts = {
     -- Optional configuration
     rg_binary = "rg",
-    literal = true,
     smart_case = true,
     max_results = 10000,
   },
@@ -60,7 +59,6 @@ use {
   config = function()
     require("nvim-search-and-replace").setup({
       rg_binary = "rg",
-      literal = true,
       smart_case = true,
       max_results = 10000,
     })
@@ -89,6 +87,41 @@ You can also open with a specific search term:
 ```vim
 :SearchAndReplaceOpen search_term
 ```
+
+### Regex Patterns
+
+The plugin uses **regex mode exclusively** - all searches use ripgrep's PCRE2 regex syntax.
+
+**Simple patterns (no special characters):**
+```
+hello        # Matches "hello"
+world        # Matches "world"
+```
+
+**To match special regex characters literally, escape them with `\`:**
+```
+\(c\)        # Matches "(c)"
+\$100        # Matches "$100"
+\.txt        # Matches ".txt"
+\*\*\*       # Matches "***"
+```
+
+**Common regex patterns:**
+```
+\d+          # One or more digits
+\w+          # One or more word characters
+\.log$       # Files ending with .log
+^import      # Lines starting with "import"
+foo|bar      # "foo" or "bar"
+[0-9]{3}     # Exactly 3 digits
+```
+
+**Special characters that need escaping:**
+```
+. * + ? ^ $ ( ) [ ] { } | \
+```
+
+For more advanced patterns, see [Regex Syntax Guide](https://docs.rs/regex/latest/regex/#syntax).
 
 ### Quick Workflows
 
@@ -159,7 +192,6 @@ The UI consists of four main panes:
 | `Enter` | Normal (in results) | Replace current item (or all marked items if any) |
 | `o` | Normal (in results) | Open the previewed file at the matched location |
 | `Ctrl-a` | Normal/Insert | Replace ALL matches |
-| `Ctrl-t` | Normal/Insert | Toggle between literal and regex mode |
 | `Ctrl-x` | Normal/Insert | Stop/abort current search |
 | `u` / `Ctrl-z` | Normal/Insert | Undo last replacement |
 | `Ctrl-r` / `Ctrl-Shift-z` | Normal/Insert | Redo last replacement |
@@ -176,9 +208,6 @@ The plugin can be configured during setup:
 
 ```lua
 require("nvim-search-and-replace").setup({
-  -- Use literal string matching instead of regex (default: true)
-  literal = true,
-  
   -- Case-insensitive search unless uppercase letters are used (default: true)
   smart_case = true,
   
@@ -195,7 +224,6 @@ require("nvim-search-and-replace").setup({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `literal` | boolean | `true` | Use exact string matching instead of regex |
 | `smart_case` | boolean | `true` | Case-insensitive search unless uppercase is present |
 | `max_results` | number | `10000` | Maximum number of search results to display |
 | `max_file_size` | string | `"1M"` | Skip files larger than this (K/M/G suffix) |

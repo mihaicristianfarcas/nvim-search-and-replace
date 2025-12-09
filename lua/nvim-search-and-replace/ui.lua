@@ -17,7 +17,6 @@ local state = {
 	results = {},
 	selected_idx = 1,
 	selected_items = {},
-	use_regex = false,
 	searching = false,
 	debounce_timer = nil,
 	last_cursor_update = 0, -- throttles preview updates during cursor movement
@@ -40,7 +39,6 @@ local function update_preview()
 	local result = state.results[state.selected_idx]
 	local sig
 	if result then
-		local mode = state.use_regex and "1" or "0"
 		sig = (result.filename or "")
 			.. ":"
 			.. tostring(result.lnum or 0)
@@ -50,8 +48,6 @@ local function update_preview()
 			.. (state.search_text or "")
 			.. ":"
 			.. (state.replace_text or "")
-			.. ":"
-			.. mode
 	else
 		sig = "no-result"
 	end
@@ -62,7 +58,7 @@ local function update_preview()
 
 	state.last_preview_sig = sig
 	local config = require("nvim-search-and-replace").get_config()
-	preview.update(state.preview_buf, result, state.search_text, state.replace_text, state.use_regex, config.smart_case)
+	preview.update(state.preview_buf, result, state.search_text, state.replace_text, config.smart_case)
 end
 
 local function update_results_list(start_idx)
@@ -74,8 +70,7 @@ local function update_results_list(start_idx)
 		state.selected_items,
 		state.search_text,
 		start_idx,
-		config.smart_case,
-		state.use_regex  -- pass regex mode for proper highlighting
+		config.smart_case
 	)
 end
 
@@ -88,7 +83,7 @@ local function do_search(opts)
 	end
 
 	state.searching = true
-	windows.update_search_title(state.search_win, state.use_regex, true)
+	windows.update_search_title(state.search_win, true)
 
 	-- reset state for new search
 	local new_results = {}
@@ -101,7 +96,6 @@ local function do_search(opts)
 	local config = require("nvim-search-and-replace").get_config()
 
 	search.run_ripgrep_async(state.search_text, {
-		literal = not state.use_regex,
 		max_results = config.max_results,
 		max_file_size = config.max_file_size,
 	}, function(batch, total_count, truncated)
@@ -145,7 +139,7 @@ local function do_search(opts)
 		end
 	end, function(final_results, exit_code, truncated)
 		state.searching = false
-		windows.update_search_title(state.search_win, state.use_regex, false)
+		windows.update_search_title(state.search_win, false)
 
 		-- Use final_results from search module as authoritative source
 		state.results = final_results
@@ -195,14 +189,6 @@ local function debounced_search()
 		state.debounce_timer = nil
 		do_search()
 	end)
-end
-
--- toggles between literal and regex search mode
-local function toggle_regex()
-	state.use_regex = not state.use_regex
-	windows.update_search_title(state.search_win, state.use_regex)
-	vim.notify(state.use_regex and "Regex mode enabled" or "Literal mode enabled", vim.log.levels.INFO)
-	do_search()
 end
 
 -- undoes last replacement and refreshes results (silent to preserve undo notification)
@@ -267,8 +253,7 @@ local function replace_selected()
 
 	if #items_to_replace > 0 then
 		state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-		local summary =
-			replacer.apply(items_to_replace, state.search_text, state.replace_text, { literal = not state.use_regex })
+		local summary = replacer.apply(items_to_replace, state.search_text, state.replace_text)
 		replacer.notify_summary(summary)
 		do_search()
 	end
@@ -277,8 +262,7 @@ end
 -- replaces all matches across all files and closes the interface
 local function replace_all()
 	state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-	local summary =
-		replacer.apply(state.results, state.search_text, state.replace_text, { literal = not state.use_regex })
+	local summary = replacer.apply(state.results, state.search_text, state.replace_text)
 	replacer.notify_summary(summary)
 	M.close()
 end
@@ -323,7 +307,7 @@ local function create_ui()
 
 	-- create layout and windows
 	local layout = windows.create_layout()
-	local wins = windows.create_windows(layout, buffers, state.use_regex)
+	local wins = windows.create_windows(layout, buffers)
 	state.search_win = wins.search
 	state.replace_win = wins.replace
 	state.results_win = wins.results
@@ -334,7 +318,6 @@ end
 local function setup_keymaps_internal()
 	local callbacks = {
 		show_help = help.show,
-		toggle_regex = toggle_regex,
 		stop_search = function()
 			if state.debounce_timer then
 				vim.fn.timer_stop(state.debounce_timer)
@@ -342,7 +325,7 @@ local function setup_keymaps_internal()
 			end
 			search.stop_search()
 			state.searching = false
-			windows.update_search_title(state.search_win, state.use_regex, false)
+			windows.update_search_title(state.search_win, false)
 			vim.notify("Search stopped", vim.log.levels.INFO)
 		end,
 		close = M.close,
@@ -364,7 +347,6 @@ function M.open(opts)
 	opts = opts or {}
 	state.search_text = opts.search or ""
 	state.replace_text = opts.replace or ""
-	state.use_regex = opts.use_regex or false
 	state.selected_items = {}
 
 	create_ui()
