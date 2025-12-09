@@ -16,11 +16,6 @@ function M.setup(state, callbacks)
 			map(buf, { "n", "i" }, key, callbacks.show_help)
 		end
 
-		-- Toggle regex mode
-		for _, key in ipairs(kb.toggle_regex.keys) do
-			map(buf, { "n", "i" }, key, callbacks.toggle_regex)
-		end
-
 		-- Stop search
 		for _, key in ipairs(kb.stop_search.keys) do
 			map(buf, { "n", "i" }, key, callbacks.stop_search)

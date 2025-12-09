@@ -1,50 +1,53 @@
+-- Replace module - handles file replacements with undo/redo support
+-- Uses exact match information from ripgrep JSON output for precise replacements
 local M = {}
 
--- history stores differential undo information (only changed lines)
+-- Undo/redo history (only changed lines, not full files)
 local history = {}
 local redo_stack = {}
 
--- regex cache for performance (weak values allow gc when not in use)
-local regex_cache = setmetatable({}, { __mode = "v" })
-
--- sorts entries by file, then line (descending), then column (descending)
--- this allows processing from bottom to top, avoiding line number shifts
+-- Sorts entries by file, then line (descending), then column (descending)
+-- This allows processing from bottom to top, avoiding line number shifts during replacement
 local function sort_descending(entries)
-	-- pre-compute sort keys to avoid repeated string comparisons
+	-- Pre-compute sort keys to avoid repeated string comparisons
 	for i = 1, #entries do
 		local e = entries[i]
 		e._sort_key = string.format("%s:%09d:%09d", e.filename, 999999999 - (e.lnum or 0), 999999999 - (e.col or 0))
 	end
 
-	-- simple string comparison is faster than multiple field checks
+	-- Simple string comparison is faster than multiple field checks
 	table.sort(entries, function(a, b)
 		return a._sort_key < b._sort_key
 	end)
 
-	-- clean up temporary sort keys
+	-- Clean up temporary sort keys
 	for i = 1, #entries do
 		entries[i]._sort_key = nil
 	end
 end
 
--- validates that entry has required fields
+-- Validates that entry has required fields
 local function validate_entry(entry)
 	return entry and entry.filename and entry.lnum and entry.col
 end
 
--- builds a matcher function for either literal or regex search
-local function build_matcher(search, opts)
-	opts = opts or {}
-
-	-- literal mode: exact string matching
-	if opts.literal ~= false then
+-- Builds a matcher function for replacements
+-- With ripgrep JSON output, we always have exact match info (match_text, match_len)
+--
+-- @param search: original search pattern (for error messages only)
+-- @param match_text: exact string that was matched by ripgrep
+-- @param match_len: length of the matched string
+-- @return matcher table with match() function, or nil and error message
+local function build_matcher(search, match_text, match_len)
+	-- Use exact match info from ripgrep JSON output
+	if match_text and match_len then
 		return {
-			mode = "literal",
+			mode = "exact",
 			match = function(line, col)
 				local start_idx = col
-				local end_idx = col + #search - 1
+				local end_idx = col + match_len - 1
 				local segment = string.sub(line, start_idx, end_idx)
-				if segment == search then
+				if segment == match_text then
 					return start_idx, end_idx, segment
 				end
 				return nil, nil, segment
@@ -52,44 +55,16 @@ local function build_matcher(search, opts)
 		}
 	end
 
-	-- regex mode: check cache first to avoid recompiling
-	local cache_key = search .. ":regex"
-	local cached_matcher = regex_cache[cache_key]
-	if cached_matcher then
-		return cached_matcher
-	end
-
-	-- compile new regex pattern
-	local ok, regex = pcall(vim.regex, search)
-	if not ok or not regex then
-		return nil, "Invalid regex: " .. tostring(search)
-	end
-
-	local matcher = {
-		mode = "regex",
-		match = function(line, col)
-			-- extract substring starting at col for matching
-			local sub = string.sub(line, col)
-			local s, e = regex:match_str(sub)
-			if not s or s ~= 0 then
-				return nil, nil, nil
-			end
-			local start_idx = col
-			local end_idx = col + e - 1
-			local matched = string.sub(line, start_idx, end_idx)
-			return start_idx, end_idx, matched
-		end,
-	}
-
-	-- cache for future use
-	regex_cache[cache_key] = matcher
-	return matcher
+	-- Error case: missing match info
+	return nil, "Missing match information from ripgrep JSON output"
 end
 
-local function compute_line_with_matcher(matcher, line, col, search, replace_text)
+-- Computes the new line after applying replacement using the provided matcher
+-- @return new_line, start_idx, end_idx, error_message
+local function compute_line_with_matcher(matcher, line, col, search, replace_text, match_text)
 	local start_idx, end_idx, segment = matcher.match(line, col)
 	if not start_idx then
-		local expected = search
+		local expected = match_text or search
 		local found = segment or "nothing"
 		return nil, nil, segment, string.format("expected '%s' but found '%s'", expected, found)
 	end
@@ -98,17 +73,26 @@ local function compute_line_with_matcher(matcher, line, col, search, replace_tex
 	return new_line, start_idx, end_idx, nil
 end
 
-function M.compute_line(line, col, search, replace_text, opts)
-	local matcher, err = build_matcher(search, opts)
+-- Computes what a line would look like after replacement
+-- Used by preview module to show before/after
+-- @return new_line, start_idx, end_idx, error_message
+function M.compute_line(line, col, search, replace_text, match_text, match_len)
+	local matcher, err = build_matcher(search, match_text, match_len)
 	if not matcher then
 		return nil, nil, nil, err
 	end
-	return compute_line_with_matcher(matcher, line, col, search, replace_text)
+	return compute_line_with_matcher(matcher, line, col, search, replace_text, match_text)
 end
 
-function M.apply(entries, search, replace_text, opts)
-	opts = opts or {}
-
+-- Applies replacements to files based on search results
+-- Processes files from bottom to top to avoid line number shifts
+-- Stores only changed lines in history for efficient undo/redo
+--
+-- @param entries: array of search results with match_text and match_len
+-- @param search: original search pattern (for error messages)
+-- @param replace_text: text to replace matches with
+-- @return summary table with: applied (count), files (array), skipped (array)
+function M.apply(entries, search, replace_text)
 	if not entries or #entries == 0 then
 		vim.notify("No entries to replace.", vim.log.levels.WARN)
 		return
@@ -119,13 +103,7 @@ function M.apply(entries, search, replace_text, opts)
 		return
 	end
 
-	local matcher, matcher_err = build_matcher(search, opts)
-	if not matcher then
-		vim.notify(matcher_err or "Invalid search pattern.", vim.log.levels.WARN)
-		return
-	end
-
-	-- group entries by file for efficient processing
+	-- Group entries by file for efficient processing
 	local per_file = {}
 	for _, entry in ipairs(entries) do
 		if validate_entry(entry) then
@@ -136,9 +114,9 @@ function M.apply(entries, search, replace_text, opts)
 	end
 
 	local summary = { applied = 0, files = {}, skipped = {} }
-	local op_diffs = {} -- differential storage: only changed lines, not full files
+	local op_diffs = {} -- Differential storage: only changed lines, not full files
 
-	-- process files one at a time to avoid memory issues
+	-- Process files one at a time to avoid memory issues
 	local files_to_process = {}
 	for filename, _ in pairs(per_file) do
 		table.insert(files_to_process, filename)
@@ -147,23 +125,23 @@ function M.apply(entries, search, replace_text, opts)
 	local files_processed = 0
 	local total_files = #files_to_process
 	
-	-- show progress for large operations
+	-- Show progress for large operations
 	local show_progress = total_files > 10
 	
 	for _, filename in ipairs(files_to_process) do
 		local file_entries = per_file[filename]
 		
-		-- sort bottom-to-top to avoid line number shifts during replacement
+		-- Sort bottom-to-top to avoid line number shifts during replacement
 		sort_descending(file_entries)
 
-		-- use pcall to handle file read errors gracefully
+		-- Use pcall to handle file read errors gracefully
 		local ok, lines = pcall(vim.fn.readfile, filename)
 		if not ok then
 			table.insert(summary.skipped, filename .. ": failed to read file")
 			goto continue
 		end
 
-		-- track original lines for undo
+		-- Track original lines for undo (only changed lines, not entire file)
 		local original_lines = {}
 		local file_applied = 0
 
@@ -175,31 +153,40 @@ function M.apply(entries, search, replace_text, opts)
 			if not line then
 				table.insert(summary.skipped, string.format("%s:%d:%d missing line", filename, lnum, col))
 			else
-				-- attempt replacement with validation
-				local new_line, _, _, err = compute_line_with_matcher(matcher, line, col, search, replace_text)
-				if new_line then
-					-- store original only once per line (first modification)
-					if not original_lines[lnum] then
-						original_lines[lnum] = line
-					end
-					lines[lnum] = new_line
-					file_applied = file_applied + 1
-				else
+				-- Build matcher with exact match info from ripgrep JSON output
+				local matcher, matcher_err = build_matcher(search, entry.match_text, entry.match_len)
+				if not matcher then
 					table.insert(
 						summary.skipped,
-						string.format("%s:%d:%d mismatch (%s)", filename, lnum, col, err or "no match")
+						string.format("%s:%d:%d %s", filename, lnum, col, matcher_err or "matcher error")
 					)
+				else
+					-- Attempt replacement with validation
+					local new_line, _, _, err = compute_line_with_matcher(matcher, line, col, search, replace_text, entry.match_text)
+					if new_line then
+						-- Store original only once per line (handles multiple matches on same line)
+						if not original_lines[lnum] then
+							original_lines[lnum] = line
+						end
+						lines[lnum] = new_line
+						file_applied = file_applied + 1
+					else
+						table.insert(
+							summary.skipped,
+							string.format("%s:%d:%d mismatch (%s)", filename, lnum, col, err or "no match")
+						)
+					end
 				end
 			end
 		end
 
-		-- write changes if any replacements succeeded
+		-- Write changes if any replacements succeeded
 		if file_applied > 0 then
 			local ok_write, err = pcall(vim.fn.writefile, lines, filename)
 			if ok_write then
 				summary.applied = summary.applied + file_applied
 				table.insert(summary.files, filename)
-				-- save diff for undo (only changed lines, not entire file)
+				-- Save diff for undo (only changed lines, not entire file)
 				op_diffs[filename] = original_lines
 			else
 				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
@@ -208,10 +195,10 @@ function M.apply(entries, search, replace_text, opts)
 		
 		files_processed = files_processed + 1
 		
-		-- yield to event loop periodically to keep UI responsive
+		-- Yield to event loop periodically to keep UI responsive
 		if files_processed % 5 == 0 then
 			if show_progress then
-				-- use async notification to avoid blocking
+				-- Use async notification to avoid blocking
 				vim.schedule(function()
 					vim.notify(
 						string.format("Replacing: %d/%d files", files_processed, total_files),
@@ -219,7 +206,7 @@ function M.apply(entries, search, replace_text, opts)
 					)
 				end)
 			end
-			-- yield control briefly
+			-- Yield control briefly
 			vim.cmd("redraw")
 		end
 
@@ -227,15 +214,16 @@ function M.apply(entries, search, replace_text, opts)
 	end
 
 	if summary.applied > 0 then
-		-- add to history with differential storage (only changed lines)
+		-- Add to history with differential storage (only changed lines)
 		table.insert(history, { diffs = op_diffs, search = search, replace = replace_text, timestamp = os.time() })
-		-- clear redo stack when new operation is performed
+		-- Clear redo stack when new operation is performed
 		redo_stack = {}
 	end
 
 	return summary
 end
 
+-- Displays a notification summary of the replacement operation
 function M.notify_summary(summary)
 	if not summary then
 		return
@@ -253,7 +241,7 @@ function M.notify_summary(summary)
 	vim.notify(message, vim.log.levels.INFO)
 end
 
--- undoes the last replacement operation
+-- Undoes the last replacement operation by restoring original lines from history
 function M.undo_last()
 	if #history == 0 then
 		vim.notify("No replace operations to undo.", vim.log.levels.INFO)
@@ -266,12 +254,12 @@ function M.undo_last()
 		return
 	end
 
-	-- save current state for potential redo
+	-- Save current state for potential redo (only changed lines)
 	local current_diffs = {}
 	for filename, original_lines in pairs(op.diffs or {}) do
 		local ok, lines = pcall(vim.fn.readfile, filename)
 		if ok then
-			-- store only the lines that changed
+			-- Store only the lines that changed
 			local current_changed = {}
 			for lnum, _ in pairs(original_lines) do
 				if lines[lnum] then
@@ -286,7 +274,7 @@ function M.undo_last()
 	for filename, original_lines in pairs(op.diffs or {}) do
 		local ok, lines = pcall(vim.fn.readfile, filename)
 		if ok then
-			-- restore only the changed lines
+			-- Restore only the changed lines to their original values
 			for lnum, original_line in pairs(original_lines) do
 				lines[lnum] = original_line
 			end
@@ -301,7 +289,7 @@ function M.undo_last()
 		end
 	end
 
-	-- add to redo stack with differential storage
+	-- Add to redo stack with differential storage
 	table.insert(redo_stack, {
 		diffs = current_diffs,
 		search = op.search,
@@ -322,6 +310,8 @@ function M.undo_last()
 	vim.notify(msg, #failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
 end
 
+-- Redoes the last undone replacement operation
+-- Moves operation from redo stack back to history
 function M.redo_last()
 	if #redo_stack == 0 then
 		vim.notify("No replace operations to redo.", vim.log.levels.INFO)

@@ -1,18 +1,18 @@
--- Search module - handles ripgrep search operations
+-- Search module - handles asynchronous ripgrep search operations with JSON output
 local M = {}
 
 local active_job = nil
 local active_token = nil
 local uv = vim.loop
 
--- token-based cancellation: each search gets a unique token
--- only callbacks from the latest token are honored
--- prevents stale search results from updating ui after new search starts
+-- Token-based cancellation: each search gets a unique token
+-- Only callbacks from the latest token are honored
+-- Prevents stale search results from updating UI after new search starts
 local function is_current(token)
 	return token == active_token
 end
 
--- stops the currently running ripgrep job and invalidates its callbacks
+-- Stops the currently running ripgrep job and invalidates its callbacks
 function M.stop_search()
 	if active_job and active_job > 0 then
 		pcall(vim.fn.jobstop, active_job)
@@ -21,7 +21,19 @@ function M.stop_search()
 	active_token = nil
 end
 
--- async streaming ripgrep with batch callbacks for progressive ui updates
+-- Runs async streaming ripgrep search with JSON output for precise match information
+-- Provides batch callbacks for progressive UI updates to keep interface responsive
+-- 
+-- @param search: regex search pattern
+-- @param opts: table with options:
+--   - smart_case: boolean (default true) - case-insensitive if pattern is all lowercase
+--   - batch_size: number (default 25) - results per batch callback
+--   - max_results: number (default 10000) - truncate after this many results
+--   - max_file_size: string (default "1M") - skip files larger than this
+--   - cwd: string (optional) - directory to search in
+-- @param on_results: function(results, count, truncated) - called for each batch
+-- @param on_complete: function(results, count, truncated) - called when search completes
+-- @return job_id: number - the jobstart ID
 function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	if not search or search == "" then
 		if on_complete then
@@ -39,27 +51,20 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local max_results = opts.max_results or 10000
 	local max_file_size = opts.max_file_size or "1M"
 
-	-- build ripgrep command with appropriate flags
+	-- Build ripgrep command with JSON output for precise match information
+	-- Always uses regex mode (no --fixed-strings flag)
 	local cmd = {
 		"rg",
-		"--color=never",
-		"--no-heading",
-		"--line-number",
-		"--column",
-		"--vimgrep",
-		"--sort=path",
+		"--json",                       -- JSON output with match details
+		"--sort=path",                  -- Sort by filename for consistent ordering
 		"--max-filesize=" .. max_file_size,
 	}
 
-	if opts.literal == true then
-		cmd[#cmd + 1] = "--fixed-strings"
-	end
-
 	if opts.smart_case ~= false then
-		cmd[#cmd + 1] = "--smart-case"
+		cmd[#cmd + 1] = "--smart-case"     -- Case-insensitive if pattern is lowercase
 	end
 
-	-- add -- to separate flags from search pattern (important for patterns starting with -)
+	-- Add -- to separate flags from search pattern (important for patterns starting with -)
 	cmd[#cmd + 1] = "--"
 	cmd[#cmd + 1] = search
 	cmd[#cmd + 1] = opts.cwd or uv.cwd()
@@ -68,12 +73,9 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local batch = {}
 	local result_count = 0
 	local truncated = false
-	local token = uv.hrtime() -- unique token for this search
+	local token = uv.hrtime() -- Unique token for this search
 
-	-- pre-compiled pattern for parsing ripgrep output
-	local pattern = "^([^:]+):(%d+):(%d+):(.*)$"
-
-	-- emits accumulated batch to ui callback
+	-- Emits accumulated batch to UI callback
 	local function emit_batch()
 		if #batch > 0 and on_results then
 			local emit_batch = batch
@@ -94,7 +96,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 				return
 			end
 
-			-- early exit if already hit max results
+			-- Early exit if already hit max results
 			if truncated then
 				return
 			end
@@ -102,36 +104,60 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 			for i = 1, #data do
 				local line = data[i]
 				if line ~= "" then
-					-- check limit before expensive parsing
+					-- Check limit before expensive parsing
 					if result_count >= max_results then
 						truncated = true
-						emit_batch() -- flush remaining results
+						emit_batch() -- Flush remaining results
 						pcall(vim.fn.jobstop, job_id)
-						return -- exit immediately to avoid further processing
+						return -- Exit immediately to avoid further processing
 					end
 
-					-- parse ripgrep output line
-					local filename, lnum, col, text = line:match(pattern)
-					if filename then
-						result_count = result_count + 1
+					-- Parse JSON output from ripgrep
+					local ok, json = pcall(vim.json.decode, line)
+					if ok and json and json.type == "match" then
+						local data = json.data
+						local filename = data.path.text
+						local lnum = data.line_number
+						local line_text = data.lines.text:gsub("\n$", "") -- Remove trailing newline
 						
-						-- truncate text to prevent memory issues with very long lines
-						if text and #text > 500 then
-							text = text:sub(1, 500) .. "..."
+						-- Truncate text to prevent memory issues with very long lines
+						if #line_text > 500 then
+							line_text = line_text:sub(1, 500) .. "..."
 						end
 						
-						local result = {
-							filename = filename,
-							lnum = tonumber(lnum),
-							col = tonumber(col),
-							text = text,
-						}
-						results[result_count] = result
-						batch[#batch + 1] = result
+						-- Process each submatch (there can be multiple matches per line)
+						-- Example: "foo 123 bar 456" with pattern "\d+" yields 2 submatches
+						for _, submatch in ipairs(data.submatches or {}) do
+							result_count = result_count + 1
+							
+							-- Convert byte offsets: ripgrep uses 0-indexed, we use 1-indexed
+							local col = submatch.start + 1
+							local match_text = submatch.match.text  -- The actual matched string
+							local match_len = submatch["end"] - submatch.start
+							
+							local result = {
+								filename = filename,
+								lnum = lnum,
+								col = col,
+								text = line_text,
+								match_text = match_text,  -- Exact string that matched (used for highlighting & replacement)
+								match_len = match_len,    -- Length of match in bytes
+							}
+							results[result_count] = result
+							batch[#batch + 1] = result
 
-						-- emit batch when full for progressive ui updates
-						if #batch >= batch_size then
-							emit_batch()
+							-- Emit batch when full for progressive UI updates
+							if #batch >= batch_size then
+								emit_batch()
+							end
+							
+							-- Check limit after adding result
+							if result_count >= max_results then
+								truncated = true
+								emit_batch()
+								pcall(vim.fn.jobstop, job_id)
+								return
+							end
 						end
 					end
 				end
@@ -173,64 +199,6 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	active_job = job_id
 	active_token = token
 	return job_id
-end
-
--- Synchronous ripgrep runner (blocks up to 5s)
-function M.run_ripgrep(search, opts)
-	if not search or search == "" then
-		return {}
-	end
-
-	opts = opts or {}
-
-	local cmd = {
-		opts.rg_binary or "rg",
-		"--color=never",
-		"--no-heading",
-		"--line-number",
-		"--column",
-		"--vimgrep",
-		"--sort=path",
-	}
-
-	if opts.literal == true then
-		cmd[#cmd + 1] = "--fixed-strings"
-	end
-
-	if opts.smart_case ~= false then
-		cmd[#cmd + 1] = "--smart-case"
-	end
-
-	cmd[#cmd + 1] = search
-	cmd[#cmd + 1] = opts.cwd or uv.cwd()
-
-	local results = {}
-	local pattern = "^([^:]+):(%d+):(%d+):(.*)$"
-
-	local job_id = vim.fn.jobstart(cmd, {
-		stdout_buffered = true,
-		on_stdout = function(_, data)
-			if data then
-				for i = 1, #data do
-					local line = data[i]
-					if line ~= "" then
-						local filename, lnum, col, text = line:match(pattern)
-						if filename then
-							results[#results + 1] = {
-								filename = filename,
-								lnum = tonumber(lnum),
-								col = tonumber(col),
-								text = text,
-							}
-						end
-					end
-				end
-			end
-		end,
-	})
-
-	vim.fn.jobwait({ job_id }, 5000)
-	return results
 end
 
 return M
