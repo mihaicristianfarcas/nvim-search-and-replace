@@ -85,9 +85,9 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 	end
 
 	if not result then
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", true)
+		vim.bo[preview_buf].modifiable = true
 		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "No selection" })
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+		vim.bo[preview_buf].modifiable = false
 		return
 	end
 
@@ -114,9 +114,9 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 	-- read file synchronously
 	local file_lines, offset = read_lines_range(result.filename, start_line, end_line)
 	if not file_lines then
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", true)
+		vim.bo[preview_buf].modifiable = true
 		vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "Cannot read file" })
-		vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+		vim.bo[preview_buf].modifiable = false
 		return
 	end
 
@@ -163,16 +163,16 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 		end
 	end
 
-	vim.api.nvim_buf_set_option(preview_buf, "modifiable", true)
+	vim.bo[preview_buf].modifiable = true
 	vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, preview_lines)
 
 	-- set filetype for syntax highlighting
 	local filetype = vim.filetype.match({ filename = result.filename })
 	if filetype then
-		vim.api.nvim_buf_set_option(preview_buf, "filetype", filetype)
+		vim.bo[preview_buf].filetype = filetype
 	end
 
-	vim.api.nvim_buf_set_option(preview_buf, "modifiable", false)
+	vim.bo[preview_buf].modifiable = false
 
 	-- apply highlights
 	local ns = vim.api.nvim_create_namespace("nvim_search_and_replace_preview")
@@ -204,29 +204,26 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 				local content = line:sub(content_offset + 1)
 
 				if use_regex then
-					-- regex mode: use vim regex for highlighting
-					local pos = 0
-					while true do
-						local ok, matches = pcall(vim.fn.matchstrpos, content:sub(pos + 1), search_text)
-						if not ok or matches[2] == -1 then
-							break
-						end
-						
-						local match_start = pos + matches[2] + 1
-						local abs_start = content_offset + match_start
-						local col_in_original = match_start
-						local is_the_match = is_matched_line and (col_in_original == result.col)
-						
+					-- regex mode: highlight entire line content (can't reliably map ripgrep regex to vim regex)
+					-- highlight the specific matched line more prominently
+					if is_matched_line then
 						vim.api.nvim_buf_add_highlight(
 							preview_buf,
 							ns,
-							is_the_match and "IncSearch" or "Search",
+							"IncSearch",
 							i - 1,
-							abs_start - 1,
-							abs_start - 1 + #matches[1]
+							content_offset,
+							-1
 						)
-						pos = match_start + #matches[1] - 1
-						if #matches[1] == 0 then break end  -- prevent infinite loop on zero-width matches
+					else
+						vim.api.nvim_buf_add_highlight(
+							preview_buf,
+							ns,
+							"CursorLine",
+							i - 1,
+							content_offset,
+							-1
+						)
 					end
 				elseif case_insensitive then
 					-- literal case-insensitive highlighting

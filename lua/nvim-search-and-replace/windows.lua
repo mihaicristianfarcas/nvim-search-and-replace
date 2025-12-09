@@ -115,17 +115,16 @@ function M.create_buffers(search_text, replace_text)
 
 	-- Set buffer options
 	for _, buf in ipairs({ buffers.search, buffers.replace }) do
-		vim.api.nvim_buf_set_option(buf, "buftype", "")
-		vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-		vim.api.nvim_buf_set_option(buf, "modifiable", true)
-		vim.api.nvim_buf_set_option(buf, "textwidth", 0)
+		vim.bo[buf].buftype = ""
+		vim.bo[buf].bufhidden = "wipe"
+		vim.bo[buf].modifiable = true
+		vim.bo[buf].textwidth = 0
 	end
 
-	vim.api.nvim_buf_set_option(buffers.results, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(buffers.results, "modifiable", false)
-	vim.api.nvim_buf_set_option(buffers.results, "wrap", false)
-	vim.api.nvim_buf_set_option(buffers.preview, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(buffers.preview, "modifiable", false)
+	vim.bo[buffers.results].buftype = "nofile"
+	vim.bo[buffers.results].modifiable = false
+	vim.bo[buffers.preview].buftype = "nofile"
+	vim.bo[buffers.preview].modifiable = false
 
 	return buffers
 end

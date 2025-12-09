@@ -49,7 +49,7 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 		new_lines = { "No results" }
 	end
 
-	vim.api.nvim_buf_set_option(results_buf, "modifiable", true)
+	vim.bo[results_buf].modifiable = true
 
 	-- split buffer operations into chunks to avoid blocking
 	local function set_lines_chunked(buf, start_line, end_line, lines, callback)
@@ -97,7 +97,7 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 	end
 
 	set_lines_chunked(results_buf, insert_at, insert_at, new_lines, function()
-		vim.api.nvim_buf_set_option(results_buf, "modifiable", false)
+		vim.bo[results_buf].modifiable = false
 		
 		-- apply highlights in chunks to avoid blocking
 		M.apply_highlights_async(results_buf, new_lines, search_text, full_refresh and 0 or insert_at, ns, smart_case, use_regex)

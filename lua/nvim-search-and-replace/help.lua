@@ -18,15 +18,15 @@ function M.show()
 
 	-- Create help buffer
 	state.help_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_option(state.help_buf, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", false)
+	vim.bo[state.help_buf].buftype = "nofile"
+	vim.bo[state.help_buf].modifiable = false
 
 	-- Get help lines from config
 	local help_lines = config.get_help_lines()
 
-	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", true)
+	vim.bo[state.help_buf].modifiable = true
 	vim.api.nvim_buf_set_lines(state.help_buf, 0, -1, false, help_lines)
-	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", false)
+	vim.bo[state.help_buf].modifiable = false
 
 	-- Calculate popup size and position (centered)
 	local width = 70
@@ -50,8 +50,8 @@ function M.show()
 	})
 
 	-- Disable insert in help window
-	vim.api.nvim_buf_set_option(state.help_buf, "modifiable", false)
-	vim.api.nvim_buf_set_option(state.help_buf, "readonly", true)
+	vim.bo[state.help_buf].modifiable = false
+	vim.bo[state.help_buf].readonly = true
 
 	-- Force normal mode when entering the help window
 	vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
