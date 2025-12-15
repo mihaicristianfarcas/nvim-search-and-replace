@@ -36,12 +36,26 @@ function M.update_keybindings(user_keys)
 	if not user_keys then
 		return
 	end
-	for action, keys in pairs(user_keys) do
+	for action, user_config in pairs(user_keys) do
 		if M.keybindings[action] then
-			if type(keys) == "string" then
-				M.keybindings[action].keys = { keys }
-			elseif type(keys) == "table" then
-				M.keybindings[action].keys = keys
+			if type(user_config) == "table" then
+				-- User passed a table with keys and optionally description
+				if user_config.keys then
+					if type(user_config.keys) == "table" then
+						M.keybindings[action].keys = vim.deepcopy(user_config.keys)
+					elseif type(user_config.keys) == "string" then
+						M.keybindings[action].keys = { user_config.keys }
+					end
+				end
+				if user_config.description then
+					M.keybindings[action].description = user_config.description
+				end
+				if user_config.context then
+					M.keybindings[action].context = user_config.context
+				end
+			elseif type(user_config) == "string" then
+				-- User passed just a string key
+				M.keybindings[action].keys = { user_config }
 			end
 		end
 	end
