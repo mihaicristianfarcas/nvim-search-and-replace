@@ -77,20 +77,6 @@ The plugin also includes it's own undo/redo stacks, so operations performed in t
 }
 ```
 
-### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
-
-```lua
-use {
-  "mihaicristianfarcas/nvim-search-and-replace",
-  config = function()
-    require("nvim-search-and-replace").setup({
-      smart_case = true,
-      max_results = 10000,
-    })
-  end
-}
-```
-
 ## Usage
 
 ### Opening the Interface
@@ -118,12 +104,10 @@ The UI looks like this:
 │ search_term             │  │ ╔═══ src/file.lua ═══  │
 ├─ Replace ───────────────┤  │                        │
 │ replacement_text        │  │  >>>>>>                │
-│                         │  │          search_term   │
-├─ Results ───────────────┤  │  <<<<<<                │ 
-│                         │  │          replacement   │
-│ ▶ src/file.lua:10       │  │                        │
-│   lib/util.lua:25       │  └────────────────────────┘
-└─────────────────────────┘
+├─ Results ───────────────┤  │          search_term   │
+│ ▶ src/file.lua:10       │  │  <<<<<<                │
+│   lib/util.lua:25       │  │          replacement   │
+└─────────────────────────┘  └────────────────────────┘
 ```
 
 ### Workflow
@@ -174,33 +158,6 @@ The UI looks like this:
 |-----|------|--------|
 | `Esc` / `q` | Normal | Close interface |
 | `Ctrl-c` | Normal/Insert | Close interface |
-
-## Configuration
-
-The plugin can be configured during setup:
-
-```lua
-require("nvim-search-and-replace").setup({
-  -- Case-insensitive search unless uppercase letters are used (default: true)
-  smart_case = true,
-  
-  -- Maximum number of search results to display (default: 10000)
-  max_results = 10000,
-  
-  -- Skip files larger than this size (default: "1M")
-  -- Supports K, M, G suffixes (e.g., "500K", "2M", "1G")
-  max_file_size = "1M",
-})
-```
-
-### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `smart_case` | boolean | `true` | Case-insensitive search unless uppercase is present |
-| `max_results` | number | `10000` | Maximum number of search results to display |
-| `max_file_size` | string | `"1M"` | Skip files larger than this (K/M/G suffix) |
-| `keymap` | table | `nil` | Custom keybindings (overrides defaults, see example above) |
 
 ## Commands
 
