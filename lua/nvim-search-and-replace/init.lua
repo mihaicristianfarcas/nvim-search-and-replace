@@ -11,6 +11,9 @@ local config = vim.deepcopy(defaults)
 
 function M.setup(user_opts)
 	config = vim.tbl_deep_extend("force", defaults, user_opts or {})
+	if user_opts and user_opts.keymap then
+		require("nvim-search-and-replace.config").update_keybindings(user_opts.keymap)
+	end
 end
 
 function M.get_config()

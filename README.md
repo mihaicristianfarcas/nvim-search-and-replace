@@ -1,29 +1,29 @@
 # nvim-search-and-replace
 
-A Neovim plugin for performing project-wide search and replace operations with a visual interface and live preview.
+A Neovim plugin for performing project-wide search and replace. No quickfix list, no sed, inspired by Telescope.
+
+It allows for regex pattern matching and searching via `ripgrep` (so **Rust's regex engine, not Vim's**). 
+The plugin also includes it's own undo/redo stacks, so operations performed in the current session can be reverted at any time.
 
 ## Preview
 
 ![Preview](assets/preview.gif)
 ## Overview
 
-`nvim-search-and-replace` provides a custom split-pane UI for finding and replacing text across your entire project. It integrates with `ripgrep` for fast searching and offers a safe, visual workflow with live previews before making changes.
-
 ### Key Features
 
-- **Async Live Search** - Fast streaming search results with async ripgrep integration
-- **Live Progress** - Real-time notification showing match count as results stream in (updates every 150ms)
-- **Smart Highlighting** - Case-insensitive match highlighting when using smart-case mode
+- **Async Live Search** - Fast, streaming search results with async ripgrep
+- **Live Progress** - Real-time notification showing match count as results stream in
+- **Pattern Highlighting** - Case-insensitive match highlighting when using smart-case mode
 - **Visual Preview** - Side-by-side comparison showing before and after changes
 - **Jump To Match** - Open the previewed file directly at the matched location
-- **Regex Support** - Full regex pattern support powered by ripgrep (PCRE2 syntax)
-- **Selective Replacement** - Mark specific items or replace all matches at once
+- **Regex Support** - Full regex pattern support powered by ripgrep
+- **Selective Replacement** - Mark specific items or replace all matches at once (using visual mode in the results window)
 - **Pre-filled Search** - Open with visual selection, search pattern (`*`), or word under cursor
 - **Safe Replacements** - Validates exact text matches before writing to prevent unintended modifications
 - **Undo/Redo** - Full undo/redo stack for all replacement operations
-- **Syntax Highlighting** - Color-coded filenames, line numbers, and precise match highlighting
 - **Search Cancellation** - Stop long-running searches with `Ctrl-x`
-- **Built-in Help** - Press `?` or `F1` for keybinding reference
+- **Help** - Press `?` or `F1` for keybinding reference
 
 ## Requirements
 
@@ -37,16 +37,42 @@ A Neovim plugin for performing project-wide search and replace operations with a
 ```lua
 {
   "mihaicristianfarcas/nvim-search-and-replace",
-  cmd = "SearchAndReplaceOpen",
+  cmd = { "SearchAndReplaceOpen", "SearchAndReplaceVisual", "SearchAndReplaceUndo", "SearchAndReplaceRedo" },
   keys = {
     { "<leader>sar", "<cmd>SearchAndReplaceOpen<cr>", desc = "[S]earch [A]nd [R]eplace" },
     { "<leader>saw", "<cmd>SearchAndReplaceVisual<cr>", desc = "[S]earch [A]nd replace [W]ord" },
   },
   opts = {
-    -- Optional configuration
-    rg_binary = "rg",
-    smart_case = true,
-    max_results = 10000,
+    -- General options
+    smart_case = true, -- Case insensitive unless uppercase is used
+    max_results = 10000, -- Maximum number of search results to display
+    max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
+    
+    -- Keymap customization (overrides defaults)
+    keymap = {
+      -- Help
+      help = { keys = { "?", "<F1>" }, description = "Toggle this help window" },
+      
+      -- Navigation
+      next_field = { keys = { "<CR>", "<Tab>" }, description = "Move to next field" },
+      prev_field = { keys = { "<S-Tab>" }, description = "Move to previous field" },
+      jump_search = { keys = { "i", "a" }, description = "Jump to search field" },
+      jump_replace = { keys = { "I" }, description = "Jump to replace field" },
+      
+      -- Selection (in results)
+      visual_select = { keys = { "v", "V" }, description = "Visual mode to select multiple results" },
+      
+      -- Actions
+      replace_selected = { keys = { "<CR>" }, description = "Replace current (or all marked items)" },
+      replace_all = { keys = { "<C-a>" }, description = "Replace ALL matches" },
+      open_in_file = { keys = { "o" }, description = "Open current result in file" },
+      stop_search = { keys = { "<C-x>" }, description = "Stop/abort current search" },
+      undo = { keys = { "u", "<C-z>" }, description = "Undo last replacement" },
+      redo = { keys = { "<C-r>", "<C-S-z>" }, description = "Redo last replacement" },
+      
+      -- Window
+      close = { keys = { "<Esc>", "q" }, description = "Close" },
+    },
   },
 }
 ```
@@ -58,7 +84,6 @@ use {
   "mihaicristianfarcas/nvim-search-and-replace",
   config = function()
     require("nvim-search-and-replace").setup({
-      rg_binary = "rg",
       smart_case = true,
       max_results = 10000,
     })
@@ -70,84 +95,32 @@ use {
 
 ### Opening the Interface
 
-Execute the following command to open the search and replace interface:
-
 ```vim
 :SearchAndReplaceOpen
 ```
-
 Or open with text from visual selection or word under cursor:
 
 ```vim
 :SearchAndReplaceVisual
 ```
-
 You can also open with a specific search term:
 
 ```vim
 :SearchAndReplaceOpen search_term
 ```
 
-### Regex Patterns
-
-The plugin uses **regex mode exclusively** - all searches use ripgrep's PCRE2 regex syntax.
-
-**Simple patterns (no special characters):**
-```
-hello        # Matches "hello"
-world        # Matches "world"
-```
-
-**To match special regex characters literally, escape them with `\`:**
-```
-\(c\)        # Matches "(c)"
-\$100        # Matches "$100"
-\.txt        # Matches ".txt"
-\*\*\*       # Matches "***"
-```
-
-**Common regex patterns:**
-```
-\d+          # One or more digits
-\w+          # One or more word characters
-\.log$       # Files ending with .log
-^import      # Lines starting with "import"
-foo|bar      # "foo" or "bar"
-[0-9]{3}     # Exactly 3 digits
-```
-
-**Special characters that need escaping:**
-```
-. * + ? ^ $ ( ) [ ] { } | \
-```
-
-For more advanced patterns, see [Regex Syntax Guide](https://docs.rs/regex/latest/regex/#syntax).
-
-### Quick Workflows
-
-**From visual selection or `*` search:**
-1. Select text in visual mode (or press `*` to search word under cursor)
-2. Run `:SearchAndReplaceVisual` (or map it to a key like `<leader>saw`)
-3. The interface opens with your selection pre-filled
-4. Enter replacement text and press `Ctrl-a` to replace all
-
-**Regex search:**
-1. Open the interface with `:SearchAndReplaceOpen`
-2. Press `Ctrl-t` to toggle regex mode
-3. Enter regex pattern (e.g., `\d+` to match numbers)
-4. Enter replacement text (supports capture groups like `\1`, `\2`)
-5. Review matches and replace
-
 ### Interface Layout
 
-The UI consists of four main panes:
+The UI looks like this:
 
 ```
 ┌─ Search ────────────────┐  ┌─ Preview ──────────────┐
 │ search_term             │  │ ╔═══ src/file.lua ═══  │
 ├─ Replace ───────────────┤  │                        │
-│ replacement_text        │  │  BEFORE: search_term   │
-├─ Results ───────────────┤  │  AFTER:  replacement   │
+│ replacement_text        │  │  >>>>>>                │
+│                         │  │          search_term   │
+├─ Results ───────────────┤  │  <<<<<<                │ 
+│                         │  │          replacement   │
 │ ▶ src/file.lua:10       │  │                        │
 │   lib/util.lua:25       │  └────────────────────────┘
 └─────────────────────────┘
@@ -156,10 +129,10 @@ The UI consists of four main panes:
 ### Workflow
 
 1. Enter search term in the top field (results update live as you type)
-2. Enter replacement text in the second field (preview updates automatically)
+2. Enter replacement text in the second field
 3. Navigate through results using `j`/`k` keys
 4. Review changes in the preview pane
-5. **Option A**: Press `Tab` to mark specific items, then `Enter` to replace marked items
+5. **Option A**: Use Visual Line mode (V) to mark specific items, then `Enter` to replace marked items
 6. **Option B**: Press `Ctrl-a` to replace all matches at once
 7. Use `u` or `Ctrl-z` to undo, `Ctrl-r` to redo
 
@@ -227,6 +200,7 @@ require("nvim-search-and-replace").setup({
 | `smart_case` | boolean | `true` | Case-insensitive search unless uppercase is present |
 | `max_results` | number | `10000` | Maximum number of search results to display |
 | `max_file_size` | string | `"1M"` | Skip files larger than this (K/M/G suffix) |
+| `keymap` | table | `nil` | Custom keybindings (overrides defaults, see example above) |
 
 ## Commands
 
@@ -237,25 +211,12 @@ require("nvim-search-and-replace").setup({
 | `:SearchAndReplaceUndo` | Undo the most recent replacement operation |
 | `:SearchAndReplaceRedo` | Redo the most recent undone replacement operation |
 
-## How It Works
-
-1. **Async Search**: Uses `ripgrep` with async streaming for fast, non-blocking search across the project
-2. **File Size Filtering**: Automatically skips files larger than 1MB using ripgrep's `--max-filesize`
-3. **Token-based Cancellation**: Unique tokens prevent stale search results from updating UI after new searches start
-4. **Debounced Preview**: Preview updates are debounced (100ms) to prevent flickering when navigating results
-5. **Chunked Rendering**: Large result sets are rendered in chunks to keep UI responsive
-6. **LRU Cache**: Recently viewed files are cached for 120x faster repeated access
-7. **Memory Safeguards**: Long lines are truncated (500 chars) to prevent memory issues with minified files
-8. **Validation**: Before writing, validates that the text at each location still matches the search term
-9. **Replacement**: Writes changes to files only when validation passes (supports regex capture groups)
-10. **History Stack**: Full undo/redo stack stores previous file content for all operations
-
 ### Safety Features
 
 - **Exact Match Validation**: Only replaces text that exactly matches at the specified location
 - **Skip Mismatches**: If text has changed since the replace, the replacement is skipped
-- **Detailed Reporting**: Shows which replacements succeeded and which were skipped
-- **Undo Support**: Maintains history to revert changes if needed
+- **Detailed Report**: Shows which replacements succeeded and which were skipped
+- **Undo/Redo Support**: Maintains history to revert changes if needed
 
 ## Limitations
 
@@ -267,20 +228,12 @@ require("nvim-search-and-replace").setup({
 
 ## Troubleshooting
 
-### Search patterns starting with `-` or `--` fail
-
-Patterns like `--`, `-f`, or `---` work correctly. The plugin now properly escapes these patterns using the `--` separator for ripgrep.
-
 ### Matches are skipped during replacement
 
 This is expected behavior. The plugin validates that the text at each match location exactly matches your replace term before replacing. Mismatches can occur due to:
 - Text being modified since the initial replace
 - Partial matches at the specified column position
 - Case sensitivity differences
-
-### Preview not updating
-
-Ensure you're in the correct input field and typing. The preview updates automatically after a 300ms debounce period.
 
 ### Search is taking too long
 
@@ -298,8 +251,7 @@ require("nvim-search-and-replace").setup({
   max_file_size = "2M",  -- Increase to 2MB
 })
 ```
-
-Note: Increasing this limit may impact performance on very large codebases.
+NOTE: Increasing this limit may impact performance on very large codebases.
 
 ## Contributing
 

@@ -32,6 +32,21 @@ M.keybindings = {
 	close = { keys = { "<Esc>", "q" }, description = "Close" },
 }
 
+function M.update_keybindings(user_keys)
+	if not user_keys then
+		return
+	end
+	for action, keys in pairs(user_keys) do
+		if M.keybindings[action] then
+			if type(keys) == "string" then
+				M.keybindings[action].keys = { keys }
+			elseif type(keys) == "table" then
+				M.keybindings[action].keys = keys
+			end
+		end
+	end
+end
+
 -- Format keybindings for display
 function M.format_keys(key_table)
 	if type(key_table) == "string" then
