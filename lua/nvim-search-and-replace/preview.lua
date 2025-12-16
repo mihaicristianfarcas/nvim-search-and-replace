@@ -208,25 +208,22 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 				local is_matched_line = (i == matched_line_idx)
 				local content = line:sub(content_offset + 1)
 
-				if result and result.match_text and result.match_len then
+				if result and result.match_text and result.match_len and result.col then
 					-- Use exact match info from ripgrep JSON output
 					-- Only highlight on the actual matched line
 					if is_matched_line then
-						local match_text = result.match_text
-						-- Find the match in the content
-						local match_start = content:find(match_text, 1, true)
-						if match_start then
-							local abs_start = content_offset + match_start
-							
-							vim.api.nvim_buf_add_highlight(
-								preview_buf,
-								ns,
-								"IncSearch",
-								i - 1,
-								abs_start - 1,
-								abs_start - 1 + result.match_len
-							)
-						end
+						-- The match is at result.col in the original line
+						-- content is the line text, and result.col is 1-indexed position
+						local abs_start = content_offset + result.col
+						
+						vim.api.nvim_buf_add_highlight(
+							preview_buf,
+							ns,
+							"IncSearch",
+							i - 1,
+							abs_start - 1,
+							abs_start - 1 + result.match_len
+						)
 					end
 				elseif case_insensitive then
 					-- Case-insensitive highlighting

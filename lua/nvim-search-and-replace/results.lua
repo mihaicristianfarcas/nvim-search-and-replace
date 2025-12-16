@@ -160,20 +160,20 @@ function M.apply_highlights_async(results_buf, lines, results_data, search_text,
 		if search_text ~= "" then
 			local search_in = line:sub(third_colon + 1)
 			
-			if result and result.match_text and result.match_len then
+			if result and result.match_text and result.match_len and result.col then
 				-- Use exact match info from ripgrep JSON output
-				-- Find where the match appears in the displayed text
-				local match_text = result.match_text
-				local match_start = search_in:find(match_text, 1, true)
-				if match_start then
-					local abs_start = third_colon + match_start
-					table.insert(highlights, {
-						group = "Search",
-						line = line_idx,
-						col_start = abs_start - 1,
-						col_end = abs_start - 1 + result.match_len,
-					})
-				end
+				-- The match is at result.col in the original line text
+				-- We need to find it in search_in which starts after ": "
+				local text_content_start = third_colon + 2  -- After ": "
+				local match_pos_in_search = result.col
+				local abs_start = text_content_start + match_pos_in_search - 1
+				
+				table.insert(highlights, {
+					group = "Search",
+					line = line_idx,
+					col_start = abs_start - 1,
+					col_end = abs_start - 1 + result.match_len,
+				})
 			elseif case_insensitive then
 				-- Case-insensitive
 				local search_lower = search_text:lower()
