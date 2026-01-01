@@ -23,7 +23,7 @@ end
 
 -- Runs async streaming ripgrep search with JSON output for precise match information
 -- Provides batch callbacks for progressive UI updates to keep interface responsive
--- 
+--
 -- @param search: regex search pattern
 -- @param opts: table with options:
 --   - smart_case: boolean (default true) - case-insensitive if pattern is all lowercase
@@ -55,13 +55,13 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	-- Always uses regex mode (no --fixed-strings flag)
 	local cmd = {
 		"rg",
-		"--json",                       -- JSON output with match details
-		"--sort=path",                  -- Sort by filename for consistent ordering
+		"--json", -- JSON output with match details
+		"--sort=path", -- Sort by filename for consistent ordering
 		"--max-filesize=" .. max_file_size,
 	}
 
 	if opts.smart_case ~= false then
-		cmd[#cmd + 1] = "--smart-case"     -- Case-insensitive if pattern is lowercase
+		cmd[#cmd + 1] = "--smart-case" -- Case-insensitive if pattern is lowercase
 	end
 
 	-- Add -- to separate flags from search pattern (important for patterns starting with -)
@@ -116,49 +116,52 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 					local ok, json = pcall(vim.json.decode, line)
 					if ok and json and json.type == "match" then
 						local data = json.data
-						local filename = data.path.text
-						local lnum = data.line_number
-						local line_text = data.lines.text:gsub("\n$", "") -- Remove trailing newline
-						
-						-- Truncate text to prevent memory issues with very long lines
-						if #line_text > 500 then
-							line_text = line_text:sub(1, 500) .. "..."
-						end
-						
-						-- Process each submatch (there can be multiple matches per line)
-						-- Example: "foo 123 bar 456" with pattern "\d+" yields 2 submatches
-						for _, submatch in ipairs(data.submatches or {}) do
-							-- Ensure match object and text exist (skip binary/malformed matches)
-							if submatch.match and submatch.match.text then
-								result_count = result_count + 1
-								
-								-- Convert byte offsets: ripgrep uses 0-indexed, we use 1-indexed
-								local col = submatch.start + 1
-								local match_text = submatch.match.text  -- The actual matched string
-								local match_len = submatch["end"] - submatch.start
-								
-								local result = {
-									filename = filename,
-									lnum = lnum,
-									col = col,
-									text = line_text,
-									match_text = match_text,  -- Exact string that matched (used for highlighting & replacement)
-									match_len = match_len,    -- Length of match in bytes
-								}
-								results[result_count] = result
-								batch[#batch + 1] = result
+						-- Ensure text fields exist (skip binary files or malformed output)
+						if data.path and data.path.text and data.lines and data.lines.text then
+							local filename = data.path.text
+							local lnum = data.line_number
+							local line_text = data.lines.text:gsub("\n$", "") -- Remove trailing newline
 
-								-- Emit batch when full for progressive UI updates
-								if #batch >= batch_size then
-									emit_batch()
-								end
-								
-								-- Check limit after adding result
-								if result_count >= max_results then
-									truncated = true
-									emit_batch()
-									pcall(vim.fn.jobstop, job_id)
-									return
+							-- Truncate text to prevent memory issues with very long lines
+							if #line_text > 500 then
+								line_text = line_text:sub(1, 500) .. "..."
+							end
+
+							-- Process each submatch (there can be multiple matches per line)
+							-- Example: "foo 123 bar 456" with pattern "\d+" yields 2 submatches
+							for _, submatch in ipairs(data.submatches or {}) do
+								-- Ensure match object and text exist (skip binary/malformed matches)
+								if submatch.match and submatch.match.text then
+									result_count = result_count + 1
+
+									-- Convert byte offsets: ripgrep uses 0-indexed, we use 1-indexed
+									local col = submatch.start + 1
+									local match_text = submatch.match.text  -- The actual matched string
+									local match_len = submatch["end"] - submatch.start
+
+									local result = {
+										filename = filename,
+										lnum = lnum,
+										col = col,
+										text = line_text,
+										match_text = match_text, -- Exact string that matched (used for highlighting & replacement)
+										match_len = match_len, -- Length of match in bytes
+									}
+									results[result_count] = result
+									batch[#batch + 1] = result
+
+									-- Emit batch when full for progressive UI updates
+									if #batch >= batch_size then
+										emit_batch()
+									end
+
+									-- Check limit after adding result
+									if result_count >= max_results then
+										truncated = true
+										emit_batch()
+										pcall(vim.fn.jobstop, job_id)
+										return
+									end
 								end
 							end
 						end
