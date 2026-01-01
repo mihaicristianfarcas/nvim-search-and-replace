@@ -128,35 +128,38 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 						-- Process each submatch (there can be multiple matches per line)
 						-- Example: "foo 123 bar 456" with pattern "\d+" yields 2 submatches
 						for _, submatch in ipairs(data.submatches or {}) do
-							result_count = result_count + 1
-							
-							-- Convert byte offsets: ripgrep uses 0-indexed, we use 1-indexed
-							local col = submatch.start + 1
-							local match_text = submatch.match.text  -- The actual matched string
-							local match_len = submatch["end"] - submatch.start
-							
-							local result = {
-								filename = filename,
-								lnum = lnum,
-								col = col,
-								text = line_text,
-								match_text = match_text,  -- Exact string that matched (used for highlighting & replacement)
-								match_len = match_len,    -- Length of match in bytes
-							}
-							results[result_count] = result
-							batch[#batch + 1] = result
+							-- Ensure match object and text exist (skip binary/malformed matches)
+							if submatch.match and submatch.match.text then
+								result_count = result_count + 1
+								
+								-- Convert byte offsets: ripgrep uses 0-indexed, we use 1-indexed
+								local col = submatch.start + 1
+								local match_text = submatch.match.text  -- The actual matched string
+								local match_len = submatch["end"] - submatch.start
+								
+								local result = {
+									filename = filename,
+									lnum = lnum,
+									col = col,
+									text = line_text,
+									match_text = match_text,  -- Exact string that matched (used for highlighting & replacement)
+									match_len = match_len,    -- Length of match in bytes
+								}
+								results[result_count] = result
+								batch[#batch + 1] = result
 
-							-- Emit batch when full for progressive UI updates
-							if #batch >= batch_size then
-								emit_batch()
-							end
-							
-							-- Check limit after adding result
-							if result_count >= max_results then
-								truncated = true
-								emit_batch()
-								pcall(vim.fn.jobstop, job_id)
-								return
+								-- Emit batch when full for progressive UI updates
+								if #batch >= batch_size then
+									emit_batch()
+								end
+								
+								-- Check limit after adding result
+								if result_count >= max_results then
+									truncated = true
+									emit_batch()
+									pcall(vim.fn.jobstop, job_id)
+									return
+								end
 							end
 						end
 					end
