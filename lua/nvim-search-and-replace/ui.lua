@@ -123,17 +123,10 @@ local function do_search(opts)
 					update_preview()
 				end
 				
-				-- show progress notification every 150ms
+				-- update results title every 150ms
 				if (now - last_notify_time) > 150 then
 					last_notify_time = now
-					local msg = string.format("Searching... %d matches found", #new_results)
-					if truncated then
-						msg = msg .. " (limit reached)"
-					end
-					vim.notify(msg, vim.log.levels.INFO, {
-						timeout = 1000,
-						replace = true,  -- replace previous notification
-					})
+					windows.update_results_title(state.results_win, #new_results, truncated)
 				end
 			end)
 		end
@@ -148,6 +141,9 @@ local function do_search(opts)
 		state.last_preview_sig = nil
 		update_results_list()
 		update_preview()
+		
+		-- Update title with final count
+		windows.update_results_title(state.results_win, #final_results, truncated)
 
 		-- Suppress notifications if requested (e.g., after undo/redo)
 		if not opts.silent then
@@ -159,13 +155,6 @@ local function do_search(opts)
 			elseif exit_code ~= 143 then
 				if #final_results == 0 then
 					vim.notify("No results found", vim.log.levels.INFO)
-				elseif truncated or #final_results < 10 then
-					-- Only notify on truncation or very few results
-					local msg = string.format("Found %d matches", #final_results)
-					if truncated then
-						msg = msg .. " (truncated)"
-					end
-					vim.notify(msg, truncated and vim.log.levels.WARN or vim.log.levels.INFO)
 				end
 			end
 		end

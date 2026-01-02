@@ -100,6 +100,19 @@ function M.update_search_title(search_win, searching)
 	end
 end
 
+function M.update_results_title(results_win, count, truncated)
+	if results_win and vim.api.nvim_win_is_valid(results_win) then
+		local kb = config.keybindings
+		local help_keys = config.format_keys(kb.help.keys)
+		local count_str = tostring(count)
+		if truncated then
+			count_str = count_str .. " (truncated)"
+		end
+		local title = string.format("Results: %s (Press %s for help)", count_str, help_keys)
+		vim.api.nvim_win_set_config(results_win, { title = title })
+	end
+end
+
 function M.create_buffers(search_text, replace_text)
 	local buffers = {}
 
