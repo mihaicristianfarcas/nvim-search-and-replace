@@ -5,6 +5,8 @@ local defaults = {
 	smart_case = true, -- Case insensitive unless uppercase is used
 	max_results = 10000, -- Maximum number of search results to display
 	max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
+	debounce_ms = 300, -- Debounce delay for search input (milliseconds)
+	multiline = false, -- Enable multiline matching (patterns can span lines)
 }
 
 local config = vim.deepcopy(defaults)

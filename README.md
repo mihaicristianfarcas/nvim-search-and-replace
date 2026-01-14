@@ -47,6 +47,8 @@ The plugin also includes it's own undo/redo stacks, so operations performed in t
     smart_case = true, -- Case insensitive unless uppercase is used
     max_results = 10000, -- Maximum number of search results to display
     max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
+    debounce_ms = 300, -- Debounce delay for search input (milliseconds)
+    multiline = false, -- Enable multiline matching (patterns can span lines)
     
     -- Keymap customization (overrides defaults)
     keymap = {
@@ -174,14 +176,19 @@ The UI looks like this:
 - **Skip Mismatches**: If text has changed since the replace, the replacement is skipped
 - **Detailed Report**: Shows which replacements succeeded and which were skipped
 - **Undo/Redo Support**: Maintains history to revert changes if needed
+- **Cross-Session Undo**: Replacement history persists across Neovim sessions
 
 ## Limitations
 
-- Only single-line matches are currently supported
+- Multiline matches are supported via `multiline = true` option, but replacement preview may be limited
 - File operations are synchronous (search is async, file writes are not)
 - Follows ripgrep's default ignore rules (respects `.gitignore`)
 - Search results limited by `max_results` config (default: 10,000)
 - Large files (>1MB) are automatically skipped to maintain performance
+
+## Health Check
+
+Run `:checkhealth nvim-search-and-replace` to verify your setup (ripgrep installation, configuration, etc.).
 
 ## Troubleshooting
 
@@ -196,7 +203,6 @@ This is expected behavior. The plugin validates that the text at each match loca
 
 Press `Ctrl-x` to stop the current search. Consider:
 - Using more specific search terms
-- Enabling literal mode for faster searches (default)
 - Adjusting `max_file_size` to skip more files
 
 ### Large files cause issues

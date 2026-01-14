@@ -64,6 +64,10 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 		cmd[#cmd + 1] = "--smart-case" -- Case-insensitive if pattern is lowercase
 	end
 
+	if opts.multiline then
+		cmd[#cmd + 1] = "--multiline" -- Enable multiline matching
+	end
+
 	-- Add -- to separate flags from search pattern (important for patterns starting with -)
 	cmd[#cmd + 1] = "--"
 	cmd[#cmd + 1] = search
@@ -73,6 +77,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local batch = {}
 	local result_count = 0
 	local truncated = false
+	local regex_error = nil
 	local token = uv.hrtime() -- Unique token for this search
 
 	-- Emits accumulated batch to UI callback
@@ -91,6 +96,21 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 
 	local job_id = vim.fn.jobstart(cmd, {
 		stdout_buffered = false,
+		stderr_buffered = true,
+		on_stderr = function(_, data)
+			if not is_current(token) or not data then
+				return
+			end
+			-- Capture regex errors from ripgrep stderr
+			for _, line in ipairs(data) do
+				if line and line ~= "" then
+					-- Ripgrep outputs "error: " prefix for regex errors
+					if line:match("^error:") or line:match("regex parse error") then
+						regex_error = line:gsub("^error:%s*", "")
+					end
+				end
+			end
+		end,
 		on_stdout = function(_, data)
 			if not is_current(token) or not data then
 				return
@@ -179,7 +199,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 			if on_complete then
 				vim.schedule(function()
 					if is_current(token) then
-						on_complete(results, exit_code, truncated)
+						on_complete(results, exit_code, truncated, regex_error)
 						active_job = nil
 						active_token = nil
 					end
@@ -196,7 +216,7 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 		active_token = nil
 		if on_complete then
 			vim.schedule(function()
-				on_complete({}, -1, false)
+				on_complete({}, -1, false, nil)
 			end)
 		end
 		return job_id

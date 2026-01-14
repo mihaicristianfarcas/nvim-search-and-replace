@@ -98,6 +98,8 @@ local function do_search(opts)
 	search.run_ripgrep_async(state.search_text, {
 		max_results = config.max_results,
 		max_file_size = config.max_file_size,
+		smart_case = config.smart_case,
+		multiline = config.multiline,
 	}, function(batch, total_count, truncated)
 		-- add new results to accumulator
 		for _, result in ipairs(batch) do
@@ -130,9 +132,9 @@ local function do_search(opts)
 				end
 			end)
 		end
-	end, function(final_results, exit_code, truncated)
+	end, function(final_results, exit_code, truncated, regex_error)
 		state.searching = false
-		windows.update_search_title(state.search_win, false)
+		windows.update_search_title(state.search_win, false, regex_error)
 
 		-- Use final_results from search module as authoritative source
 		state.results = final_results
@@ -147,14 +149,19 @@ local function do_search(opts)
 
 		-- Suppress notifications if requested (e.g., after undo/redo)
 		if not opts.silent then
-			exit_code = exit_code or 0
-			
-			-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
-			if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
-				vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
-			elseif exit_code ~= 143 then
-				if #final_results == 0 then
-					vim.notify("No results found", vim.log.levels.INFO)
+			-- Show regex error if present
+			if regex_error then
+				vim.notify("Regex error: " .. regex_error, vim.log.levels.WARN)
+			else
+				exit_code = exit_code or 0
+				
+				-- Exit code 143 is SIGTERM (normal when stopping search), 1 is no results found
+				if exit_code ~= 0 and exit_code ~= 1 and exit_code ~= 143 then
+					vim.notify("Search terminated (exit code: " .. tostring(exit_code) .. ")", vim.log.levels.WARN)
+				elseif exit_code ~= 143 then
+					if #final_results == 0 then
+						vim.notify("No results found", vim.log.levels.INFO)
+					end
 				end
 			end
 		end
@@ -173,8 +180,10 @@ local function debounced_search()
 		state.debounce_timer = nil
 	end
 
-	-- schedule new search
-	state.debounce_timer = vim.fn.timer_start(300, function()
+	-- schedule new search with configurable debounce
+	local plugin_config = require("nvim-search-and-replace").get_config()
+	local debounce_ms = plugin_config.debounce_ms or 300
+	state.debounce_timer = vim.fn.timer_start(debounce_ms, function()
 		state.debounce_timer = nil
 		do_search()
 	end)
@@ -360,6 +369,7 @@ function M.close()
 
 	search.stop_search()
 	help.close()
+	keymaps.cleanup()
 
 	for _, win in ipairs({ state.search_win, state.replace_win, state.results_win, state.preview_win }) do
 		if win and vim.api.nvim_win_is_valid(win) then

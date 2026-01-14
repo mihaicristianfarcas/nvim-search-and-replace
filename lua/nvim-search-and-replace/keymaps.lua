@@ -2,6 +2,9 @@
 local M = {}
 local config = require("nvim-search-and-replace.config")
 
+-- Track autocommand IDs for cleanup
+local autocmd_ids = {}
+
 function M.setup(state, callbacks)
 	local kb = config.keybindings
 
@@ -103,11 +106,15 @@ function M.setup(state, callbacks)
 		vim.cmd("startinsert!")
 	end)
 
+	-- Clear any previous autocommands
+	M.cleanup()
+
 	-- Results buffer: Update preview on cursor move
-	vim.api.nvim_create_autocmd("CursorMoved", {
+	local id1 = vim.api.nvim_create_autocmd("CursorMoved", {
 		buffer = state.results_buf,
 		callback = callbacks.update_cursor_preview,
 	})
+	table.insert(autocmd_ids, id1)
 
 	-- Replace actions (works in both normal and visual mode)
 	for _, key in ipairs(kb.replace_selected.keys) do
@@ -139,16 +146,26 @@ function M.setup(state, callbacks)
 	end
 
 	-- Auto-search on text change in search buffer
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+	local id2 = vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = state.search_buf,
 		callback = callbacks.do_search,
 	})
+	table.insert(autocmd_ids, id2)
 
 	-- Auto-update preview on replace text change
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+	local id3 = vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = state.replace_buf,
 		callback = callbacks.update_preview_text,
 	})
+	table.insert(autocmd_ids, id3)
+end
+
+-- Clean up autocommands when closing the UI
+function M.cleanup()
+	for _, id in ipairs(autocmd_ids) do
+		pcall(vim.api.nvim_del_autocmd, id)
+	end
+	autocmd_ids = {}
 end
 
 return M
