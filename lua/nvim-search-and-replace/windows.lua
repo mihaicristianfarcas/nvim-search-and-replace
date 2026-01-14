@@ -83,18 +83,25 @@ function M.create_windows(layout, buffers)
 	})
 
 	-- Set window options
-	vim.api.nvim_win_set_option(windows.search, "wrap", false)
-	vim.api.nvim_win_set_option(windows.replace, "wrap", false)
-	vim.api.nvim_win_set_option(windows.results, "cursorline", true)
-	vim.api.nvim_win_set_option(windows.results, "wrap", false)
-	vim.api.nvim_win_set_option(windows.preview, "wrap", true)
+	vim.wo[windows.search].wrap = false
+	vim.wo[windows.replace].wrap = false
+	vim.wo[windows.results].cursorline = true
+	vim.wo[windows.results].wrap = false
+	vim.wo[windows.preview].wrap = true
 
 	return windows
 end
 
-function M.update_search_title(search_win, searching)
+function M.update_search_title(search_win, searching, regex_error)
 	if search_win and vim.api.nvim_win_is_valid(search_win) then
-		local status = searching and " [Searching...] " or " "
+		local status
+		if regex_error then
+			status = " [Invalid regex] "
+		elseif searching then
+			status = " [Searching...] "
+		else
+			status = " "
+		end
 		local title = "Search regex" .. status
 		vim.api.nvim_win_set_config(search_win, { title = title })
 	end
