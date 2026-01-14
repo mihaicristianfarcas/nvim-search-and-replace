@@ -6,6 +6,53 @@ local M = {}
 local history = {}
 local redo_stack = {}
 
+-- History persistence configuration
+local HISTORY_FILE = vim.fn.stdpath("cache") .. "/nvim-search-and-replace-history.json"
+local MAX_HISTORY_ENTRIES = 50 -- Limit persisted history to prevent large files
+
+-- Saves history to disk for cross-session persistence
+local function save_history()
+	-- Only save a limited number of recent entries
+	local to_save = {}
+	local start_idx = math.max(1, #history - MAX_HISTORY_ENTRIES + 1)
+	for i = start_idx, #history do
+		to_save[#to_save + 1] = history[i]
+	end
+
+	local ok, encoded = pcall(vim.json.encode, { history = to_save, redo_stack = redo_stack })
+	if ok then
+		local file = io.open(HISTORY_FILE, "w")
+		if file then
+			file:write(encoded)
+			file:close()
+		end
+	end
+end
+
+-- Loads history from disk on module load
+local function load_history()
+	local file = io.open(HISTORY_FILE, "r")
+	if not file then
+		return
+	end
+
+	local content = file:read("*a")
+	file:close()
+
+	if not content or content == "" then
+		return
+	end
+
+	local ok, data = pcall(vim.json.decode, content)
+	if ok and data then
+		history = data.history or {}
+		redo_stack = data.redo_stack or {}
+	end
+end
+
+-- Load history on module initialization
+load_history()
+
 -- Sorts entries by file, then line (descending), then column (descending)
 -- This allows processing from bottom to top, avoiding line number shifts during replacement
 local function sort_descending(entries)
@@ -218,6 +265,12 @@ function M.apply(entries, search, replace_text)
 		table.insert(history, { diffs = op_diffs, search = search, replace = replace_text, timestamp = os.time() })
 		-- Clear redo stack when new operation is performed
 		redo_stack = {}
+		-- Persist history to disk
+		save_history()
+		-- Reload any open buffers that were modified to keep them in sync
+		vim.schedule(function()
+			vim.cmd("checktime")
+		end)
 	end
 
 	return summary
@@ -297,6 +350,14 @@ function M.undo_last()
 		timestamp = op.timestamp,
 	})
 
+	-- Persist history to disk
+	save_history()
+
+	-- Reload any open buffers that were modified to keep them in sync
+	vim.schedule(function()
+		vim.cmd("checktime")
+	end)
+
 	local msg = string.format("Undid replace (%d file(s) restored).", restored)
 	if #history > 0 then
 		msg = msg .. string.format(" %d more undo(s) available.", #history)
@@ -366,6 +427,14 @@ function M.redo_last()
 		replace = op.replace,
 		timestamp = op.timestamp,
 	})
+
+	-- Persist history to disk
+	save_history()
+
+	-- Reload any open buffers that were modified to keep them in sync
+	vim.schedule(function()
+		vim.cmd("checktime")
+	end)
 
 	local msg = string.format("Redid replace (%d file(s) restored).", restored)
 	if #redo_stack > 0 then
