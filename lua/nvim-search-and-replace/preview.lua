@@ -128,8 +128,8 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 	end_line = math.min(offset + #file_lines - 1, lnum + context_lines)
 
 	local preview_lines = {}
-	local before_line_idx = nil
-	local after_line_idx = nil
+	local before_range = nil -- { first, last } preview line numbers for the original block
+	local after_range = nil -- { first, last } preview line numbers for the replacement block
 	local matched_line_idx = nil
 
 	-- add filename header
@@ -141,31 +141,60 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 	table.insert(preview_lines, "╔═══ " .. rel_path .. " ═══")
 	table.insert(preview_lines, "")
 
+	-- How many lines the match spans (one extra per embedded newline)
+	local _, match_nl = (result.match_text or ""):gsub("\n", "")
+	local end_lnum = lnum + match_nl
+
 	-- build preview content
+	local skip_until = nil
 	for i = start_line, end_line do
+		if skip_until and i <= skip_until then
+			goto continue
+		end
+
 		local line_idx = i - offset + 1
 		local line = file_lines[line_idx] or ""
 		local prefix = string.format("%4d │", i)
 
 		if i == lnum and replace_text ~= "" then
-			local new_line =
-				replacer.compute_line(line, result.col, search_text, replace_text, result.match_text, result.match_len)
+			-- Gather the original lines the match spans, then compute the replacement
+			local region = {}
+			for j = lnum, end_lnum do
+				region[#region + 1] = file_lines[j - offset + 1]
+			end
+			-- Only compute if every spanned line is within the read window
+			local have_region = (#region == (end_lnum - lnum + 1))
+			local new_lines = have_region
+				and replacer.compute_region(region, result.col, replace_text, result.match_text, result.match_len)
+				or nil
 
 			table.insert(preview_lines, "")
 			table.insert(preview_lines, "      >>>>>>")
-			before_line_idx = #preview_lines + 1
-			matched_line_idx = before_line_idx
-			table.insert(preview_lines, prefix .. " " .. line)
+			local before_first = #preview_lines + 1
+			matched_line_idx = before_first
+			for j = lnum, end_lnum do
+				local rline = file_lines[j - offset + 1] or ""
+				table.insert(preview_lines, string.format("%4d │", j) .. " " .. rline)
+			end
+			before_range = { before_first, #preview_lines }
+
 			table.insert(preview_lines, "      <<<<<<")
-			after_line_idx = #preview_lines + 1
-			table.insert(preview_lines, prefix .. " " .. (new_line or line))
+			local after_first = #preview_lines + 1
+			for _, nline in ipairs(new_lines or { line }) do
+				table.insert(preview_lines, prefix .. " " .. nline)
+			end
+			after_range = { after_first, #preview_lines }
 			table.insert(preview_lines, "")
+
+			skip_until = end_lnum
 		else
 			table.insert(preview_lines, prefix .. " " .. line)
 			if i == lnum then
 				matched_line_idx = #preview_lines
 			end
 		end
+
+		::continue::
 	end
 
 	vim.bo[preview_buf].modifiable = true
@@ -193,11 +222,15 @@ local function do_preview_update(preview_buf, result, search_text, replace_text,
 		end
 	end
 
-	if before_line_idx then
-		vim.api.nvim_buf_add_highlight(preview_buf, ns, "DiffDelete", before_line_idx - 1, 0, -1)
+	if before_range then
+		for ln = before_range[1], before_range[2] do
+			vim.api.nvim_buf_add_highlight(preview_buf, ns, "DiffDelete", ln - 1, 0, -1)
+		end
 	end
-	if after_line_idx then
-		vim.api.nvim_buf_add_highlight(preview_buf, ns, "DiffAdd", after_line_idx - 1, 0, -1)
+	if after_range then
+		for ln = after_range[1], after_range[2] do
+			vim.api.nvim_buf_add_highlight(preview_buf, ns, "DiffAdd", ln - 1, 0, -1)
+		end
 	end
 
 	if search_text ~= "" then

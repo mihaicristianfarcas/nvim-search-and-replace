@@ -167,12 +167,14 @@ function M.apply_highlights_async(results_buf, lines, results_data, search_text,
 				local text_content_start = third_colon + 2  -- After ": "
 				local match_pos_in_search = result.col
 				local abs_start = text_content_start + match_pos_in_search - 1
-				
+
+				-- For multiline matches only the first physical line is displayed,
+				-- so clamp the highlight to the end of the line to avoid overshooting.
 				table.insert(highlights, {
 					group = "Search",
 					line = line_idx,
 					col_start = abs_start - 1,
-					col_end = abs_start - 1 + result.match_len,
+					col_end = math.min(abs_start - 1 + result.match_len, #line),
 				})
 			elseif case_insensitive then
 				-- Case-insensitive

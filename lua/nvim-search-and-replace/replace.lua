@@ -142,57 +142,104 @@ local function validate_entry(entry)
 	return entry and entry.filename and entry.lnum and entry.col
 end
 
--- Builds a matcher function for replacements
--- With ripgrep JSON output, we always have exact match info (match_text, match_len)
---
--- @param search: original search pattern (for error messages only)
--- @param match_text: exact string that was matched by ripgrep
--- @param match_len: length of the matched string
--- @return matcher table with match() function, or nil and error message
-local function build_matcher(search, match_text, match_len)
-	-- Use exact match info from ripgrep JSON output
-	if match_text and match_len then
-		return {
-			mode = "exact",
-			match = function(line, col)
-				local start_idx = col
-				local end_idx = col + match_len - 1
-				local segment = string.sub(line, start_idx, end_idx)
-				if segment == match_text then
-					return start_idx, end_idx, segment
-				end
-				return nil, nil, segment
-			end,
-		}
+-- Computes a line-range edit for a single match against the current file lines.
+-- Handles both single-line and multiline (newline-containing) matches uniformly.
+-- The spanned region starts at the beginning of `lnum`, so `col` (1-indexed) is
+-- also the match's byte offset within the region — which lets us validate the
+-- exact matched bytes before changing anything.
+-- @return edit { start = lnum, old = {orig lines}, new = {replacement lines} } or nil, err
+local function compute_edit(lines, lnum, col, match_text, match_len, replace_text)
+	if not match_text or not match_len then
+		return nil, "missing match information"
 	end
 
-	-- Error case: missing match info
-	return nil, "Missing match information from ripgrep JSON output"
+	-- How many extra lines the match spans (one per embedded newline)
+	local _, num_nl = match_text:gsub("\n", "")
+	local end_lnum = lnum + num_nl
+
+	local old = {}
+	for i = lnum, end_lnum do
+		if not lines[i] then
+			return nil, string.format("missing line %d", i)
+		end
+		old[#old + 1] = lines[i]
+	end
+
+	local region = table.concat(old, "\n")
+	local segment = region:sub(col, col + match_len - 1)
+	if segment ~= match_text then
+		return nil, string.format("expected '%s' but found '%s'", match_text, segment)
+	end
+
+	-- Byte offset (1-indexed) just past the match on the last spanned line
+	local end_col_last
+	if num_nl == 0 then
+		end_col_last = col + match_len - 1
+	else
+		end_col_last = #match_text:match("[^\n]*$") -- bytes after the final newline
+	end
+
+	local prefix = old[1]:sub(1, col - 1)
+	local suffix = old[#old]:sub(end_col_last + 1)
+	local new_content = prefix .. replace_text .. suffix
+
+	-- The replacement itself may contain newlines, yielding multiple result lines
+	local new = {}
+	for s in (new_content .. "\n"):gmatch("(.-)\n") do
+		new[#new + 1] = s
+	end
+
+	return { start = lnum, old = old, new = new }
 end
 
--- Computes the new line after applying replacement using the provided matcher
--- @return new_line, start_idx, end_idx, error_message
-local function compute_line_with_matcher(matcher, line, col, search, replace_text, match_text)
-	local start_idx, end_idx, segment = matcher.match(line, col)
-	if not start_idx then
-		local expected = match_text or search
-		local found = segment or "nothing"
-		return nil, nil, segment, string.format("expected '%s' but found '%s'", expected, found)
+-- Replaces lines[start .. start+old_count-1] with `new`, keeping the parallel
+-- `eols` array in sync. Count-neutral edits mutate in place (cheap, and they
+-- preserve each line's terminator exactly); count-changing edits rebuild the
+-- arrays. New interior lines inherit the region's leading terminator and the
+-- final new line inherits the region's trailing terminator (so a missing final
+-- newline is preserved). Returns the (possibly new) lines, eols arrays.
+local function splice(lines, eols, start, old_count, new)
+	if #new == old_count then
+		for i = 1, old_count do
+			lines[start + i - 1] = new[i]
+		end
+		return lines, eols
 	end
 
-	local new_line = string.sub(line, 1, start_idx - 1) .. replace_text .. string.sub(line, end_idx + 1)
-	return new_line, start_idx, end_idx, nil
+	local region_eol = eols[start] or "\n"
+	local tail_eol = eols[start + old_count - 1] or "\n"
+	local nl, ne = {}, {}
+	for i = 1, start - 1 do
+		nl[#nl + 1] = lines[i]
+		ne[#ne + 1] = eols[i]
+	end
+	for i = 1, #new do
+		nl[#nl + 1] = new[i]
+		ne[#ne + 1] = (i < #new) and region_eol or tail_eol
+	end
+	for i = start + old_count, #lines do
+		nl[#nl + 1] = lines[i]
+		ne[#ne + 1] = eols[i]
+	end
+	return nl, ne
 end
 
--- Computes what a line would look like after replacement
--- Used by preview module to show before/after
--- @return new_line, start_idx, end_idx, error_message
-function M.compute_line(line, col, search, replace_text, match_text, match_len)
-	local matcher, err = build_matcher(search, match_text, match_len)
-	if not matcher then
-		return nil, nil, nil, err
+-- True if lines[start ..] matches every element of `arr`.
+local function region_matches(lines, start, arr)
+	for i = 1, #arr do
+		if lines[start + i - 1] ~= arr[i] then
+			return false
+		end
 	end
-	return compute_line_with_matcher(matcher, line, col, search, replace_text, match_text)
+	return true
+end
+
+-- Computes the replacement lines for a match given the region of original lines
+-- starting at the match's first line. Handles single- and multi-line matches.
+-- Used by the preview to render a correct before/after. @return new_lines or nil
+function M.compute_region(region_lines, col, replace_text, match_text, match_len)
+	local edit = compute_edit(region_lines, 1, col, match_text, match_len, replace_text)
+	return edit and edit.new or nil
 end
 
 -- Applies replacements to files based on search results
@@ -253,41 +300,25 @@ function M.apply(entries, search, replace_text)
 		end
 
 		-- Track original lines for undo (only changed lines, not entire file)
-		local original_lines = {}
+		-- Edits recorded in apply order (entries are sorted bottom-to-top, so this
+		-- is descending start line). Each edit captures the exact before/after
+		-- line range, which lets undo/redo replay or reverse it safely even when
+		-- a multiline replacement changes the file's line count.
+		local edits = {}
 		local file_applied = 0
 
 		for _, entry in ipairs(file_entries) do
-			local lnum = entry.lnum
-			local col = entry.col
-			local line = lines[lnum]
-
-			if not line then
-				table.insert(summary.skipped, string.format("%s:%d:%d missing line", filename, lnum, col))
+			local edit, err =
+				compute_edit(lines, entry.lnum, entry.col, entry.match_text, entry.match_len, replace_text)
+			if edit then
+				lines, eols = splice(lines, eols, edit.start, #edit.old, edit.new)
+				edits[#edits + 1] = edit
+				file_applied = file_applied + 1
 			else
-				-- Build matcher with exact match info from ripgrep JSON output
-				local matcher, matcher_err = build_matcher(search, entry.match_text, entry.match_len)
-				if not matcher then
-					table.insert(
-						summary.skipped,
-						string.format("%s:%d:%d %s", filename, lnum, col, matcher_err or "matcher error")
-					)
-				else
-					-- Attempt replacement with validation
-					local new_line, _, _, err = compute_line_with_matcher(matcher, line, col, search, replace_text, entry.match_text)
-					if new_line then
-						-- Store original only once per line (handles multiple matches on same line)
-						if not original_lines[lnum] then
-							original_lines[lnum] = line
-						end
-						lines[lnum] = new_line
-						file_applied = file_applied + 1
-					else
-						table.insert(
-							summary.skipped,
-							string.format("%s:%d:%d mismatch (%s)", filename, lnum, col, err or "no match")
-						)
-					end
-				end
+				table.insert(
+					summary.skipped,
+					string.format("%s:%d:%d mismatch (%s)", filename, entry.lnum, entry.col, err or "no match")
+				)
 			end
 		end
 
@@ -297,14 +328,8 @@ function M.apply(entries, search, replace_text)
 			if ok_write then
 				summary.applied = summary.applied + file_applied
 				table.insert(summary.files, filename)
-				-- Save diff for undo: keep both the original ("before") and the
-				-- written ("after") text of each changed line. Storing "after"
-				-- lets undo/redo verify the file hasn't drifted before touching it.
-				local file_diff = {}
-				for lnum, before in pairs(original_lines) do
-					file_diff[lnum] = { before = before, after = lines[lnum] }
-				end
-				op_diffs[filename] = file_diff
+				-- Store the ordered edits so undo/redo can validate and reverse them.
+				op_diffs[filename] = { edits = edits }
 			else
 				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
 			end
@@ -364,52 +389,86 @@ function M.notify_summary(summary)
 	vim.notify(message, vim.log.levels.INFO)
 end
 
--- Resolves the (target, expected) text for one stored line diff.
--- direction "undo" restores `before` (expecting the line to currently hold `after`);
--- direction "redo" restores `after` (expecting the line to currently hold `before`).
--- Legacy diffs were plain "before" strings: those are restored without validation
--- (and only meaningfully support undo).
-local function resolve_diff(diff, direction)
-	if type(diff) == "table" then
-		if direction == "undo" then
-			return diff.before, diff.after
-		end
-		return diff.after, diff.before
+-- Normalizes a stored per-file diff into an ordered edits list (apply order:
+-- descending start line). Handles the current { edits = {...} } format and two
+-- legacy on-disk formats from earlier releases:
+--   * { [lnum] = { before = , after = } }  -> single-line edit
+--   * { [lnum] = "before_string" }          -> single-line, undo-only (no `after`)
+local function normalize_edits(file_diff)
+	if file_diff.edits then
+		return file_diff.edits
 	end
-	-- Legacy format: bare "before" string, no recorded counterpart to validate against.
-	return diff, nil
+
+	local edits = {}
+	for lnum, d in pairs(file_diff) do
+		if type(d) == "table" then
+			edits[#edits + 1] = { start = lnum, old = { d.before }, new = { d.after } }
+		else
+			edits[#edits + 1] = { start = lnum, old = { d } } -- no recorded `new`
+		end
+	end
+	table.sort(edits, function(a, b)
+		return a.start > b.start
+	end)
+	return edits
 end
 
--- Applies an operation's stored line diffs in the given direction, validating
--- that each line still holds the expected text before overwriting it. Lines that
--- have drifted since the operation are skipped so we never clobber unrelated edits.
+-- Applies an operation's stored edits in the given direction, validating that
+-- each region still holds the expected text before changing it, so unrelated
+-- edits since the operation are never clobbered.
+--   * "redo" replays edits in apply order (old -> new)
+--   * "undo" reverses them (new -> old)
+-- A region that has drifted is reported as a conflict and skipped; if skipping it
+-- would desync later line numbers (a multiline edit that changed the line count),
+-- the whole file is aborted unwritten so it can't be corrupted.
 -- @return restored (file count), conflicts (array of "file:line"), failed (array)
 local function restore_op(op, direction)
 	local restored, conflicts, failed = 0, {}, {}
+	local undo = direction == "undo"
 
-	for filename, line_diffs in pairs(op.diffs or {}) do
+	for filename, file_diff in pairs(op.diffs or {}) do
 		local lines, eols = read_file(filename)
 		if not lines then
 			table.insert(failed, string.format("%s (cannot read)", filename))
 		else
-			local changed = false
-			for lnum, diff in pairs(line_diffs) do
-				local target, expected = resolve_diff(diff, direction)
-				if target ~= nil then
-					local current = lines[lnum]
-					if current == target then
-						-- Already in the desired state; nothing to do.
-					elseif expected ~= nil and current ~= expected then
-						-- File drifted since the operation was recorded; don't overwrite.
-						table.insert(conflicts, string.format("%s:%d", filename, lnum))
-					else
-						lines[lnum] = target
-						changed = true
+			local edits = normalize_edits(file_diff)
+
+			-- redo follows apply (stored) order; undo reverses it
+			local order = {}
+			if undo then
+				for i = #edits, 1, -1 do
+					order[#order + 1] = edits[i]
+				end
+			else
+				order = edits
+			end
+
+			local changed, aborted = false, false
+			for _, edit in ipairs(order) do
+				local target = undo and edit.old or edit.new
+				local expected = undo and edit.new or edit.old
+				if target == nil then
+					-- Legacy entry with no counterpart for this direction; skip.
+				elseif region_matches(lines, edit.start, target) then
+					-- Already in the desired state; nothing to do.
+				elseif expected == nil then
+					-- Legacy single-line undo without an `after` to validate against.
+					lines[edit.start] = target[1]
+					changed = true
+				elseif region_matches(lines, edit.start, expected) then
+					lines, eols = splice(lines, eols, edit.start, #expected, target)
+					changed = true
+				else
+					-- Region drifted since the operation was recorded.
+					table.insert(conflicts, string.format("%s:%d", filename, edit.start))
+					if #expected ~= #target then
+						aborted = true
+						break -- skipping a count-changing edit would desync the rest
 					end
 				end
 			end
 
-			if changed then
+			if not aborted and changed then
 				local ok_write, err = write_file(filename, lines, eols)
 				if ok_write then
 					restored = restored + 1

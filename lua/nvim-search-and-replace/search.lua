@@ -140,7 +140,13 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 						if data.path and data.path.text and data.lines and data.lines.text then
 							local filename = data.path.text
 							local lnum = data.line_number
-							local line_text = data.lines.text:gsub("\n$", "") -- Remove trailing newline
+							-- For display, use only the first physical line of the match.
+							-- In multiline mode data.lines.text can span several lines with
+							-- embedded newlines, which are illegal in a buffer line; the full
+							-- (newline-containing) matched text is preserved in match_text below.
+							local raw = data.lines.text
+							local nl = raw:find("\n", 1, true)
+							local line_text = nl and raw:sub(1, nl - 1) or raw
 
 							-- Truncate text to prevent memory issues with very long lines
 							if #line_text > 500 then
