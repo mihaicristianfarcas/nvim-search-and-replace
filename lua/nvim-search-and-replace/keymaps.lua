@@ -30,18 +30,14 @@ function M.setup(state, callbacks)
 		end
 		map(buf, { "n", "i" }, "<C-c>", callbacks.close)
 
-		-- Undo
+		-- Undo / redo (normal mode only, so insert-mode keys such as <C-r>
+		-- and <C-z> keep their native behavior inside the input fields)
 		for _, key in ipairs(kb.undo.keys) do
-			if key == "u" then
-				map(buf, "n", key, callbacks.undo)
-			else
-				map(buf, { "n", "i" }, key, callbacks.undo)
-			end
+			map(buf, "n", key, callbacks.undo)
 		end
 
-		-- Redo
 		for _, key in ipairs(kb.redo.keys) do
-			map(buf, { "n", "i" }, key, callbacks.redo)
+			map(buf, "n", key, callbacks.redo)
 		end
 	end
 

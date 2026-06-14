@@ -74,72 +74,48 @@ end
 -- Get help text lines with actual keybindings
 function M.get_help_lines()
 	local kb = M.keybindings
+	local COL = 28
+
+	-- Builds a "    <label><padding>- <description>" row.
+	-- Padding is clamped to at least one space so long key lists never
+	-- produce a negative string.rep count (which would raise an error).
+	local function row(label, description)
+		local pad = math.max(1, COL - #label)
+		return "    " .. label .. string.rep(" ", pad) .. "- " .. description
+	end
+
+	-- Formatted key list for an action, with an optional suffix (e.g. " (in results)").
+	local function label(action, suffix)
+		local s = M.format_keys(kb[action].keys)
+		if suffix then
+			s = s .. suffix
+		end
+		return s
+	end
 
 	return {
 		"",
 		"  SEARCH AND REPLACE - HELP",
 		"",
 		"  Navigation:",
-		"    "
-			.. M.format_keys(kb.next_field.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.next_field.keys))
-			.. "- "
-			.. kb.next_field.description,
-		"    "
-			.. M.format_keys(kb.prev_field.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.prev_field.keys))
-			.. "- "
-			.. kb.prev_field.description,
-		"    j/k or arrow keys" .. string.rep(" ", 28 - 17) .. "- Navigate results list",
+		row(label("next_field"), kb.next_field.description),
+		row(label("prev_field"), kb.prev_field.description),
+		row("j/k or arrow keys", "Navigate results list"),
 		"",
 		"  Selection (in results):",
-		"    "
-			.. M.format_keys(kb.visual_select.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.visual_select.keys))
-			.. "- "
-			.. kb.visual_select.description,
+		row(label("visual_select"), kb.visual_select.description),
 		"",
 		"  Actions:",
-		"    " .. M.format_keys(kb.replace_selected.keys) .. " (in results)" .. string.rep(
-			" ",
-			28 - #(M.format_keys(kb.replace_selected.keys) .. " (in results)")
-		) .. "- " .. kb.replace_selected.description,
-		"    "
-			.. M.format_keys(kb.replace_all.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.replace_all.keys))
-			.. "- "
-			.. kb.replace_all.description,
-		"    " .. M.format_keys(kb.open_in_file.keys) .. " (in results)" .. string.rep(
-			" ",
-			28 - #(M.format_keys(kb.open_in_file.keys) .. " (in results)")
-		) .. "- " .. kb.open_in_file.description,
-		"    "
-			.. M.format_keys(kb.stop_search.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.stop_search.keys))
-			.. "- "
-			.. kb.stop_search.description,
-		"    "
-			.. M.format_keys(kb.undo.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.undo.keys))
-			.. "- "
-			.. kb.undo.description,
-		"    "
-			.. M.format_keys(kb.redo.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.redo.keys))
-			.. "- "
-			.. kb.redo.description,
+		row(label("replace_selected", " (in results)"), kb.replace_selected.description),
+		row(label("replace_all"), kb.replace_all.description),
+		row(label("open_in_file", " (in results)"), kb.open_in_file.description),
+		row(label("stop_search"), kb.stop_search.description),
+		row(label("undo"), kb.undo.description),
+		row(label("redo"), kb.redo.description),
 		"",
 		"  Other:",
-		"    "
-			.. M.format_keys(kb.help.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.help.keys))
-			.. "- "
-			.. kb.help.description,
-		"    "
-			.. M.format_keys(kb.close.keys)
-			.. string.rep(" ", 28 - #M.format_keys(kb.close.keys))
-			.. "- "
-			.. kb.close.description,
+		row(label("help"), kb.help.description),
+		row(label("close"), kb.close.description),
 		"",
 	}
 end

@@ -343,6 +343,13 @@ end
 -- opens the search and replace interface
 function M.open(opts)
 	opts = opts or {}
+
+	-- The UI state is a singleton; if an instance is already open, tear it down
+	-- first so we don't orphan its windows/buffers and the new options apply.
+	if state.search_win and vim.api.nvim_win_is_valid(state.search_win) then
+		M.close()
+	end
+
 	state.search_text = opts.search or ""
 	state.replace_text = opts.replace or ""
 	state.selected_items = {}

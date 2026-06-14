@@ -10,16 +10,20 @@ local redo_stack = {}
 local HISTORY_FILE = vim.fn.stdpath("cache") .. "/nvim-search-and-replace-history.json"
 local MAX_HISTORY_ENTRIES = 50 -- Limit persisted history to prevent large files
 
+-- Keeps only the most recent MAX_HISTORY_ENTRIES entries of a stack.
+local function tail(stack)
+	local out = {}
+	local start_idx = math.max(1, #stack - MAX_HISTORY_ENTRIES + 1)
+	for i = start_idx, #stack do
+		out[#out + 1] = stack[i]
+	end
+	return out
+end
+
 -- Saves history to disk for cross-session persistence
 local function save_history()
-	-- Only save a limited number of recent entries
-	local to_save = {}
-	local start_idx = math.max(1, #history - MAX_HISTORY_ENTRIES + 1)
-	for i = start_idx, #history do
-		to_save[#to_save + 1] = history[i]
-	end
-
-	local ok, encoded = pcall(vim.json.encode, { history = to_save, redo_stack = redo_stack })
+	-- Bound both stacks so the persisted file can't grow without limit
+	local ok, encoded = pcall(vim.json.encode, { history = tail(history), redo_stack = tail(redo_stack) })
 	if ok then
 		local file = io.open(HISTORY_FILE, "w")
 		if file then
@@ -233,8 +237,14 @@ function M.apply(entries, search, replace_text)
 			if ok_write then
 				summary.applied = summary.applied + file_applied
 				table.insert(summary.files, filename)
-				-- Save diff for undo (only changed lines, not entire file)
-				op_diffs[filename] = original_lines
+				-- Save diff for undo: keep both the original ("before") and the
+				-- written ("after") text of each changed line. Storing "after"
+				-- lets undo/redo verify the file hasn't drifted before touching it.
+				local file_diff = {}
+				for lnum, before in pairs(original_lines) do
+					file_diff[lnum] = { before = before, after = lines[lnum] }
+				end
+				op_diffs[filename] = file_diff
 			else
 				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
 			end
@@ -294,7 +304,95 @@ function M.notify_summary(summary)
 	vim.notify(message, vim.log.levels.INFO)
 end
 
--- Undoes the last replacement operation by restoring original lines from history
+-- Resolves the (target, expected) text for one stored line diff.
+-- direction "undo" restores `before` (expecting the line to currently hold `after`);
+-- direction "redo" restores `after` (expecting the line to currently hold `before`).
+-- Legacy diffs were plain "before" strings: those are restored without validation
+-- (and only meaningfully support undo).
+local function resolve_diff(diff, direction)
+	if type(diff) == "table" then
+		if direction == "undo" then
+			return diff.before, diff.after
+		end
+		return diff.after, diff.before
+	end
+	-- Legacy format: bare "before" string, no recorded counterpart to validate against.
+	return diff, nil
+end
+
+-- Applies an operation's stored line diffs in the given direction, validating
+-- that each line still holds the expected text before overwriting it. Lines that
+-- have drifted since the operation are skipped so we never clobber unrelated edits.
+-- @return restored (file count), conflicts (array of "file:line"), failed (array)
+local function restore_op(op, direction)
+	local restored, conflicts, failed = 0, {}, {}
+
+	for filename, line_diffs in pairs(op.diffs or {}) do
+		local ok, lines = pcall(vim.fn.readfile, filename)
+		if not ok then
+			table.insert(failed, string.format("%s (cannot read)", filename))
+		else
+			local changed = false
+			for lnum, diff in pairs(line_diffs) do
+				local target, expected = resolve_diff(diff, direction)
+				if target ~= nil then
+					local current = lines[lnum]
+					if current == target then
+						-- Already in the desired state; nothing to do.
+					elseif expected ~= nil and current ~= expected then
+						-- File drifted since the operation was recorded; don't overwrite.
+						table.insert(conflicts, string.format("%s:%d", filename, lnum))
+					else
+						lines[lnum] = target
+						changed = true
+					end
+				end
+			end
+
+			if changed then
+				local ok_write, err = pcall(vim.fn.writefile, lines, filename)
+				if ok_write then
+					restored = restored + 1
+				else
+					table.insert(failed, string.format("%s (%s)", filename, err))
+				end
+			end
+		end
+	end
+
+	return restored, conflicts, failed
+end
+
+-- Builds and emits the notification for an undo/redo, then persists + reloads.
+local function finish_restore(verb, restored, conflicts, failed, this_stack, other_label, other_count)
+	save_history()
+
+	-- Reload any open buffers that were modified to keep them in sync
+	vim.schedule(function()
+		vim.cmd("checktime")
+	end)
+
+	local msg = string.format("%s replace (%d file(s) restored).", verb, restored)
+	if #this_stack > 0 then
+		msg = msg .. string.format(" %d more %s available.", #this_stack, verb == "Undid" and "undo(s)" or "redo(s)")
+	end
+	if other_count > 0 then
+		msg = msg .. string.format(" %d %s available.", other_count, other_label)
+	end
+	if #conflicts > 0 then
+		msg = msg .. " Skipped (file changed since): " .. table.concat(conflicts, ", ")
+	end
+	if #failed > 0 then
+		msg = msg .. " Failed: " .. table.concat(failed, "; ")
+	end
+
+	local level = (#failed > 0 or #conflicts > 0) and vim.log.levels.WARN or vim.log.levels.INFO
+	vim.notify(msg, level)
+end
+
+-- Undoes the last replacement operation by restoring original lines from history.
+-- The operation moves to the redo stack unchanged; its stored before/after pair
+-- makes the reverse (redo) deterministic.
 function M.undo_last()
 	if #history == 0 then
 		vim.notify("No replace operations to undo.", vim.log.levels.INFO)
@@ -302,77 +400,13 @@ function M.undo_last()
 	end
 
 	local op = table.remove(history)
-	if not op then
-		vim.notify("No replace operations to undo.", vim.log.levels.INFO)
-		return
-	end
-
-	-- Save current state for potential redo (only changed lines)
-	local current_diffs = {}
-	for filename, original_lines in pairs(op.diffs or {}) do
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if ok then
-			-- Store only the lines that changed
-			local current_changed = {}
-			for lnum, _ in pairs(original_lines) do
-				if lines[lnum] then
-					current_changed[lnum] = lines[lnum]
-				end
-			end
-			current_diffs[filename] = current_changed
-		end
-	end
-
-	local restored, failed = 0, {}
-	for filename, original_lines in pairs(op.diffs or {}) do
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if ok then
-			-- Restore only the changed lines to their original values
-			for lnum, original_line in pairs(original_lines) do
-				lines[lnum] = original_line
-			end
-			local ok_write, err = pcall(vim.fn.writefile, lines, filename)
-			if ok_write then
-				restored = restored + 1
-			else
-				table.insert(failed, string.format("%s (%s)", filename, err))
-			end
-		else
-			table.insert(failed, string.format("%s (cannot read)", filename))
-		end
-	end
-
-	-- Add to redo stack with differential storage
-	table.insert(redo_stack, {
-		diffs = current_diffs,
-		search = op.search,
-		replace = op.replace,
-		timestamp = op.timestamp,
-	})
-
-	-- Persist history to disk
-	save_history()
-
-	-- Reload any open buffers that were modified to keep them in sync
-	vim.schedule(function()
-		vim.cmd("checktime")
-	end)
-
-	local msg = string.format("Undid replace (%d file(s) restored).", restored)
-	if #history > 0 then
-		msg = msg .. string.format(" %d more undo(s) available.", #history)
-	end
-	if #redo_stack > 0 then
-		msg = msg .. string.format(" %d redo(s) available.", #redo_stack)
-	end
-	if #failed > 0 then
-		msg = msg .. " Failed: " .. table.concat(failed, "; ")
-	end
-	vim.notify(msg, #failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+	local restored, conflicts, failed = restore_op(op, "undo")
+	table.insert(redo_stack, op)
+	finish_restore("Undid", restored, conflicts, failed, history, "redo(s)", #redo_stack)
 end
 
--- Redoes the last undone replacement operation
--- Moves operation from redo stack back to history
+-- Redoes the last undone replacement operation.
+-- Moves the operation from the redo stack back to history.
 function M.redo_last()
 	if #redo_stack == 0 then
 		vim.notify("No replace operations to redo.", vim.log.levels.INFO)
@@ -380,73 +414,9 @@ function M.redo_last()
 	end
 
 	local op = table.remove(redo_stack)
-	if not op then
-		vim.notify("No replace operations to redo.", vim.log.levels.INFO)
-		return
-	end
-
-	-- save current changed lines before restoring for undo
-	local current_diffs = {}
-	for filename, changed_lines in pairs(op.diffs or {}) do
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if ok then
-			-- store only the lines that will be changed
-			local current_changed = {}
-			for lnum, _ in pairs(changed_lines) do
-				if lines[lnum] then
-					current_changed[lnum] = lines[lnum]
-				end
-			end
-			current_diffs[filename] = current_changed
-		end
-	end
-
-	local restored, failed = 0, {}
-	for filename, changed_lines in pairs(op.diffs or {}) do
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if ok then
-			-- restore only the changed lines
-			for lnum, changed_line in pairs(changed_lines) do
-				lines[lnum] = changed_line
-			end
-			local ok_write, err = pcall(vim.fn.writefile, lines, filename)
-			if ok_write then
-				restored = restored + 1
-			else
-				table.insert(failed, string.format("%s (%s)", filename, err))
-			end
-		else
-			table.insert(failed, string.format("%s (cannot read)", filename))
-		end
-	end
-
-	-- add back to history with differential storage
-	table.insert(history, {
-		diffs = current_diffs,
-		search = op.search,
-		replace = op.replace,
-		timestamp = op.timestamp,
-	})
-
-	-- Persist history to disk
-	save_history()
-
-	-- Reload any open buffers that were modified to keep them in sync
-	vim.schedule(function()
-		vim.cmd("checktime")
-	end)
-
-	local msg = string.format("Redid replace (%d file(s) restored).", restored)
-	if #redo_stack > 0 then
-		msg = msg .. string.format(" %d more redo(s) available.", #redo_stack)
-	end
-	if #history > 0 then
-		msg = msg .. string.format(" %d undo(s) available.", #history)
-	end
-	if #failed > 0 then
-		msg = msg .. " Failed: " .. table.concat(failed, "; ")
-	end
-	vim.notify(msg, #failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+	local restored, conflicts, failed = restore_op(op, "redo")
+	table.insert(history, op)
+	finish_restore("Redid", restored, conflicts, failed, redo_stack, "undo(s)", #history)
 end
 
 function M.get_history_count()

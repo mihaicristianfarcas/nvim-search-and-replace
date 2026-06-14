@@ -13,16 +13,47 @@ end, {
 	nargs = "?",
 })
 
+-- Returns the most recent visual selection (from the '< and '> marks).
+-- Multi-line selections collapse to the first line's portion, since the
+-- search field is a single-line input.
+local function get_visual_selection()
+	local s = vim.fn.getpos("'<")
+	local e = vim.fn.getpos("'>")
+	local srow, scol = s[2], s[3]
+	local erow, ecol = e[2], e[3]
+	if srow == 0 or erow == 0 then
+		return ""
+	end
+
+	local lines = vim.fn.getline(srow, erow)
+	if type(lines) == "string" then
+		lines = { lines }
+	end
+	if #lines == 0 then
+		return ""
+	end
+
+	if #lines == 1 then
+		-- Clamp the (inclusive) end column; linewise selections report a huge value.
+		ecol = math.min(ecol, #lines[1])
+		return string.sub(lines[1], scol, ecol)
+	end
+
+	-- Multi-line: use the selected portion of the first line only.
+	return string.sub(lines[1], scol)
+end
+
 -- Command to open with visual selection or word under cursor
-vim.api.nvim_create_user_command("SearchAndReplaceVisual", function()
-	local mode = vim.fn.mode()
+vim.api.nvim_create_user_command("SearchAndReplaceVisual", function(opts)
 	local text = ""
 
-	if mode == "v" or mode == "V" or mode == "\22" then -- visual mode
-		-- Get visual selection
-		vim.cmd('noau normal! "vy"')
-		text = vim.fn.getreg("v")
-	else
+	-- When invoked over a range (e.g. from visual mode via `:`), Vim has already
+	-- left visual mode, so read the selection from the '< / '> marks instead of mode().
+	if opts.range and opts.range > 0 then
+		text = get_visual_selection()
+	end
+
+	if text == "" then
 		-- Check if there's a search pattern in the / register (from *, /, etc.)
 		local search_register = vim.fn.getreg("/")
 		if search_register and search_register ~= "" then
