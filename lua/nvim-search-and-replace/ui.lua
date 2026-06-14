@@ -15,6 +15,7 @@ local state = {
 	search_text = "",
 	replace_text = "",
 	results = {},
+	truncated = false, -- whether results were capped at max_results
 	selected_idx = 1,
 	selected_items = {},
 	searching = false,
@@ -83,6 +84,7 @@ local function do_search(opts)
 	end
 
 	state.searching = true
+	state.truncated = false
 	windows.update_search_title(state.search_win, true)
 
 	-- reset state for new search
@@ -138,6 +140,7 @@ local function do_search(opts)
 
 		-- Use final_results from search module as authoritative source
 		state.results = final_results
+		state.truncated = truncated or false
 		state.selected_idx = #final_results > 0 and 1 or 0
 		state.selected_items = {}
 		state.last_preview_sig = nil
@@ -259,6 +262,25 @@ end
 
 -- replaces all matches across all files and closes the interface
 local function replace_all()
+	-- When results were capped at max_results, "Replace ALL" can only touch the
+	-- loaded subset. Make that explicit so the user isn't misled into thinking
+	-- every match in the project was replaced.
+	if state.truncated then
+		local choice = vim.fn.confirm(
+			string.format(
+				"Results were truncated at %d matches; more exist that aren't loaded.\nReplace only the %d loaded matches?",
+				#state.results,
+				#state.results
+			),
+			"&Replace loaded\n&Cancel",
+			2,
+			"Warning"
+		)
+		if choice ~= 1 then
+			return
+		end
+	end
+
 	state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
 	local summary = replacer.apply(state.results, state.search_text, state.replace_text)
 	replacer.notify_summary(summary)

@@ -57,6 +57,66 @@ end
 -- Load history on module initialization
 load_history()
 
+-- Reads a file as raw bytes and splits it into logical lines, preserving each
+-- line's exact terminator ("\n", "\r\n", or "" for a final line with no newline).
+-- This lets us rewrite only the changed lines without altering a file's
+-- line-ending style or its trailing-newline state.
+-- @return lines (array), eols (array, parallel to lines) — or nil on read error
+local function read_file(filename)
+	local file = io.open(filename, "rb")
+	if not file then
+		return nil
+	end
+	local content = file:read("*a")
+	file:close()
+	content = content or ""
+
+	local lines, eols = {}, {}
+	local pos, len = 1, #content
+	while pos <= len do
+		local nl = content:find("\n", pos, true)
+		if nl then
+			local line = content:sub(pos, nl - 1)
+			local eol = "\n"
+			if line:sub(-1) == "\r" then
+				line = line:sub(1, -2)
+				eol = "\r\n"
+			end
+			lines[#lines + 1] = line
+			eols[#eols + 1] = eol
+			pos = nl + 1
+		else
+			-- Final chunk with no trailing newline
+			lines[#lines + 1] = content:sub(pos)
+			eols[#eols + 1] = ""
+			pos = len + 1
+		end
+	end
+
+	return lines, eols
+end
+
+-- Writes logical lines back as raw bytes, re-attaching each line's terminator.
+-- @return ok (boolean), err (string|nil)
+local function write_file(filename, lines, eols)
+	local parts = {}
+	for i = 1, #lines do
+		parts[#parts + 1] = lines[i]
+		parts[#parts + 1] = eols[i] or "\n"
+	end
+
+	local file, err = io.open(filename, "wb")
+	if not file then
+		return false, err or "cannot open for writing"
+	end
+	local ok, werr = file:write(table.concat(parts))
+	file:close()
+	if not ok then
+		return false, werr or "write failed"
+	end
+	return true
+end
+
 -- Sorts entries by file, then line (descending), then column (descending)
 -- This allows processing from bottom to top, avoiding line number shifts during replacement
 local function sort_descending(entries)
@@ -185,9 +245,9 @@ function M.apply(entries, search, replace_text)
 		-- Sort bottom-to-top to avoid line number shifts during replacement
 		sort_descending(file_entries)
 
-		-- Use pcall to handle file read errors gracefully
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if not ok then
+		-- Read raw bytes, preserving line endings and trailing-newline state
+		local lines, eols = read_file(filename)
+		if not lines then
 			table.insert(summary.skipped, filename .. ": failed to read file")
 			goto continue
 		end
@@ -233,7 +293,7 @@ function M.apply(entries, search, replace_text)
 
 		-- Write changes if any replacements succeeded
 		if file_applied > 0 then
-			local ok_write, err = pcall(vim.fn.writefile, lines, filename)
+			local ok_write, err = write_file(filename, lines, eols)
 			if ok_write then
 				summary.applied = summary.applied + file_applied
 				table.insert(summary.files, filename)
@@ -328,8 +388,8 @@ local function restore_op(op, direction)
 	local restored, conflicts, failed = 0, {}, {}
 
 	for filename, line_diffs in pairs(op.diffs or {}) do
-		local ok, lines = pcall(vim.fn.readfile, filename)
-		if not ok then
+		local lines, eols = read_file(filename)
+		if not lines then
 			table.insert(failed, string.format("%s (cannot read)", filename))
 		else
 			local changed = false
@@ -350,7 +410,7 @@ local function restore_op(op, direction)
 			end
 
 			if changed then
-				local ok_write, err = pcall(vim.fn.writefile, lines, filename)
+				local ok_write, err = write_file(filename, lines, eols)
 				if ok_write then
 					restored = restored + 1
 				else
