@@ -7,6 +7,7 @@ local defaults = {
 	max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
 	debounce_ms = 300, -- Debounce delay for search input (milliseconds)
 	multiline = false, -- Enable multiline matching (patterns can span lines)
+	sort = "path", -- Result ordering: "path" (stable, single-threaded) or false/"none" (faster, unordered)
 }
 
 local config = vim.deepcopy(defaults)

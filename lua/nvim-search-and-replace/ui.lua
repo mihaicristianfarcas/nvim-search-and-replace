@@ -62,7 +62,7 @@ local function update_preview()
 	preview.update(state.preview_buf, result, state.search_text, state.replace_text, config.smart_case)
 end
 
-local function update_results_list(start_idx)
+local function update_results_list()
 	local config = require("nvim-search-and-replace").get_config()
 	results.update(
 		state.results_buf,
@@ -70,7 +70,6 @@ local function update_results_list(start_idx)
 		state.selected_idx,
 		state.selected_items,
 		state.search_text,
-		start_idx,
 		config.smart_case
 	)
 end
@@ -102,6 +101,7 @@ local function do_search(opts)
 		max_file_size = config.max_file_size,
 		smart_case = config.smart_case,
 		multiline = config.multiline,
+		sort = config.sort,
 	}, function(batch, total_count, truncated)
 		-- add new results to accumulator
 		for _, result in ipairs(batch) do

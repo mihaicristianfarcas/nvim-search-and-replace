@@ -117,6 +117,28 @@ local function write_file(filename, lines, eols)
 	return true
 end
 
+-- Canonical absolute path with symlinks resolved, so a search-result path and an
+-- open buffer's (possibly symlink-resolved) name can be compared reliably.
+local function canonical(path)
+	return vim.loop.fs_realpath(path) or vim.fn.fnamemodify(path, ":p")
+end
+
+-- True if the file is open in a loaded buffer with unsaved changes. Writing such
+-- a file on disk would be silently overwritten the next time the buffer is saved
+-- (and our checktime reload would clash), so callers skip these files instead.
+local function has_unsaved_buffer(filename)
+	local target = canonical(filename)
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].modified then
+			local name = vim.api.nvim_buf_get_name(b)
+			if name ~= "" and canonical(name) == target then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 -- Sorts entries by file, then line (descending), then column (descending)
 -- This allows processing from bottom to top, avoiding line number shifts during replacement
 local function sort_descending(entries)
@@ -279,16 +301,16 @@ function M.apply(entries, search, replace_text)
 	for filename, _ in pairs(per_file) do
 		table.insert(files_to_process, filename)
 	end
-	
-	local files_processed = 0
-	local total_files = #files_to_process
-	
-	-- Show progress for large operations
-	local show_progress = total_files > 10
-	
+
 	for _, filename in ipairs(files_to_process) do
 		local file_entries = per_file[filename]
-		
+
+		-- Don't clobber a file the user is editing with unsaved changes
+		if has_unsaved_buffer(filename) then
+			table.insert(summary.skipped, filename .. ": buffer has unsaved changes (save or close it first)")
+			goto continue
+		end
+
 		-- Sort bottom-to-top to avoid line number shifts during replacement
 		sort_descending(file_entries)
 
@@ -299,7 +321,6 @@ function M.apply(entries, search, replace_text)
 			goto continue
 		end
 
-		-- Track original lines for undo (only changed lines, not entire file)
 		-- Edits recorded in apply order (entries are sorted bottom-to-top, so this
 		-- is descending start line). Each edit captures the exact before/after
 		-- line range, which lets undo/redo replay or reverse it safely even when
@@ -333,23 +354,6 @@ function M.apply(entries, search, replace_text)
 			else
 				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
 			end
-		end
-		
-		files_processed = files_processed + 1
-		
-		-- Yield to event loop periodically to keep UI responsive
-		if files_processed % 5 == 0 then
-			if show_progress then
-				-- Use async notification to avoid blocking
-				vim.schedule(function()
-					vim.notify(
-						string.format("Replacing: %d/%d files", files_processed, total_files),
-						vim.log.levels.INFO
-					)
-				end)
-			end
-			-- Yield control briefly
-			vim.cmd("redraw")
 		end
 
 		::continue::
@@ -422,60 +426,76 @@ end
 -- would desync later line numbers (a multiline edit that changed the line count),
 -- the whole file is aborted unwritten so it can't be corrupted.
 -- @return restored (file count), conflicts (array of "file:line"), failed (array)
+-- Restores one file's edits. Mutates the shared conflicts/failed arrays and
+-- returns true if the file was written (counts toward "files restored").
+local function restore_file(filename, file_diff, undo, conflicts, failed)
+	if has_unsaved_buffer(filename) then
+		table.insert(conflicts, filename .. " (unsaved buffer)")
+		return false
+	end
+
+	local lines, eols = read_file(filename)
+	if not lines then
+		table.insert(failed, string.format("%s (cannot read)", filename))
+		return false
+	end
+
+	local edits = normalize_edits(file_diff)
+
+	-- redo follows apply (stored) order; undo reverses it
+	local order = {}
+	if undo then
+		for i = #edits, 1, -1 do
+			order[#order + 1] = edits[i]
+		end
+	else
+		order = edits
+	end
+
+	local changed, aborted = false, false
+	for _, edit in ipairs(order) do
+		local target = undo and edit.old or edit.new
+		local expected = undo and edit.new or edit.old
+		if target == nil then
+			-- Legacy entry with no counterpart for this direction; skip.
+		elseif region_matches(lines, edit.start, target) then
+			-- Already in the desired state; nothing to do.
+		elseif expected == nil then
+			-- Legacy single-line undo without an `after` to validate against.
+			lines[edit.start] = target[1]
+			changed = true
+		elseif region_matches(lines, edit.start, expected) then
+			lines, eols = splice(lines, eols, edit.start, #expected, target)
+			changed = true
+		else
+			-- Region drifted since the operation was recorded.
+			table.insert(conflicts, string.format("%s:%d", filename, edit.start))
+			if #expected ~= #target then
+				aborted = true
+				break -- skipping a count-changing edit would desync the rest
+			end
+		end
+	end
+
+	if aborted or not changed then
+		return false
+	end
+
+	local ok_write, err = write_file(filename, lines, eols)
+	if not ok_write then
+		table.insert(failed, string.format("%s (%s)", filename, err))
+		return false
+	end
+	return true
+end
+
 local function restore_op(op, direction)
 	local restored, conflicts, failed = 0, {}, {}
 	local undo = direction == "undo"
 
 	for filename, file_diff in pairs(op.diffs or {}) do
-		local lines, eols = read_file(filename)
-		if not lines then
-			table.insert(failed, string.format("%s (cannot read)", filename))
-		else
-			local edits = normalize_edits(file_diff)
-
-			-- redo follows apply (stored) order; undo reverses it
-			local order = {}
-			if undo then
-				for i = #edits, 1, -1 do
-					order[#order + 1] = edits[i]
-				end
-			else
-				order = edits
-			end
-
-			local changed, aborted = false, false
-			for _, edit in ipairs(order) do
-				local target = undo and edit.old or edit.new
-				local expected = undo and edit.new or edit.old
-				if target == nil then
-					-- Legacy entry with no counterpart for this direction; skip.
-				elseif region_matches(lines, edit.start, target) then
-					-- Already in the desired state; nothing to do.
-				elseif expected == nil then
-					-- Legacy single-line undo without an `after` to validate against.
-					lines[edit.start] = target[1]
-					changed = true
-				elseif region_matches(lines, edit.start, expected) then
-					lines, eols = splice(lines, eols, edit.start, #expected, target)
-					changed = true
-				else
-					-- Region drifted since the operation was recorded.
-					table.insert(conflicts, string.format("%s:%d", filename, edit.start))
-					if #expected ~= #target then
-						aborted = true
-						break -- skipping a count-changing edit would desync the rest
-					end
-				end
-			end
-
-			if not aborted and changed then
-				local ok_write, err = write_file(filename, lines, eols)
-				if ok_write then
-					restored = restored + 1
-				else
-					table.insert(failed, string.format("%s (%s)", filename, err))
-				end
-			end
+		if restore_file(filename, file_diff, undo, conflicts, failed) then
+			restored = restored + 1
 		end
 	end
 

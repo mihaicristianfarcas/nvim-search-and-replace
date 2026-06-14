@@ -49,6 +49,7 @@ The plugin also includes it's own undo/redo stacks, so operations performed in t
     max_file_size = "1M", -- Skip files larger than this (ripgrep format: K, M, G)
     debounce_ms = 300, -- Debounce delay for search input (milliseconds)
     multiline = false, -- Enable multiline matching (patterns can span lines)
+    sort = "path", -- Result ordering: "path" (stable) or false/"none" (faster on large repos, unordered)
     
     -- Keymap customization (overrides defaults)
     keymap = {
@@ -180,7 +181,8 @@ The UI looks like this:
 
 ## Limitations
 
-- Multiline matches are supported via `multiline = true` option, but replacement preview may be limited
+- Multiline matches (across lines) are fully supported via the `multiline = true` option, including replacement and before/after preview
+- Files open in a buffer with unsaved changes are skipped during replacement (save or close them first)
 - File operations are synchronous (search is async, file writes are not)
 - Follows ripgrep's default ignore rules (respects `.gitignore`)
 - Search results limited by `max_results` config (default: 10,000)

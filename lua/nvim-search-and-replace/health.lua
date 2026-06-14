@@ -51,6 +51,7 @@ function M.check()
 		info("Config: max_file_size=" .. tostring(config.max_file_size))
 		info("Config: debounce_ms=" .. tostring(config.debounce_ms))
 		info("Config: multiline=" .. tostring(config.multiline))
+		info("Config: sort=" .. tostring(config.sort))
 	else
 		warn("Plugin not loaded (this is normal if setup() hasn't been called)")
 	end

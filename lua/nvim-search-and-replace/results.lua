@@ -7,10 +7,10 @@ local RENDER_CHUNK_SIZE = 200   -- Render in chunks to avoid blocking UI
 local HIGHLIGHT_CHUNK_SIZE = 500 -- Apply highlights in chunks
 local MAX_TEXT_DISPLAY = 120     -- Limit displayed text length per result
 
--- Updates results list buffer with search matches
--- Supports incremental updates for better performance with streaming results
--- @param start_idx: controls incremental updates (1 = full redraw, >1 = append-only)
-function M.update(results_buf, results, selected_idx, selected_items, search_text, start_idx, smart_case)
+-- Updates results list buffer with search matches.
+-- The buffer is fully refreshed on each call; lines and highlights are written in
+-- chunks across event-loop ticks so large result sets don't block the UI.
+function M.update(results_buf, results, selected_idx, selected_items, search_text, smart_case)
 	if not results_buf or not vim.api.nvim_buf_is_valid(results_buf) then
 		return
 	end
@@ -19,16 +19,15 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 		results = {}
 	end
 
-	start_idx = start_idx or 1
 	search_text = search_text or ""
 	smart_case = smart_case ~= false  -- Default to true
 
 	local cwd = vim.loop.cwd()
 	local ns = vim.api.nvim_create_namespace("nvim_search_and_replace_selection")
 
-	-- Build only the new lines that need to be written
+	-- Build the display line for every result
 	local new_lines = {}
-	for i = start_idx, #results do
+	for i = 1, #results do
 		local result = results[i]
 		local rel_path = result.filename
 		if rel_path:sub(1, #cwd) == cwd then
@@ -43,69 +42,50 @@ function M.update(results_buf, results, selected_idx, selected_items, search_tex
 			string.format("%s:%d:%d: %s", rel_path, result.lnum, result.col, text)
 	end
 
-	-- if this is the first batch or there are no results, refresh the whole buffer
-	local full_refresh = (start_idx == 1)
 	if #results == 0 then
-		full_refresh = true
 		new_lines = { "No results" }
 	end
 
 	vim.bo[results_buf].modifiable = true
+	pcall(vim.api.nvim_buf_clear_namespace, results_buf, ns, 0, -1)
 
-	-- split buffer operations into chunks to avoid blocking
-	local function set_lines_chunked(buf, start_line, end_line, lines, callback)
+	-- Write the lines in chunks to avoid blocking on large result sets
+	local function set_lines_chunked(buf, lines, callback)
 		local total = #lines
 		local processed = 0
-		
+
 		local function process_chunk()
 			if not vim.api.nvim_buf_is_valid(buf) then
 				return
 			end
-			
+
 			local chunk_end = math.min(processed + RENDER_CHUNK_SIZE, total)
 			local chunk = {}
 			for i = processed + 1, chunk_end do
 				chunk[#chunk + 1] = lines[i]
 			end
-			
-			if full_refresh and processed == 0 then
+
+			if processed == 0 then
 				pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, chunk)
 			else
-				local insert_pos = start_line + processed
-				pcall(vim.api.nvim_buf_set_lines, buf, insert_pos, insert_pos, false, chunk)
+				pcall(vim.api.nvim_buf_set_lines, buf, processed, processed, false, chunk)
 			end
-			
+
 			processed = chunk_end
-			
+
 			if processed < total then
-				-- continue processing in next event loop tick
 				vim.schedule(process_chunk)
-			else
-				-- done with lines, start highlighting
-				if callback then
-					callback()
-				end
+			elseif callback then
+				callback()
 			end
 		end
-		
+
 		process_chunk()
 	end
 
-	local insert_at = full_refresh and 0 or (start_idx - 1)
-	
-	if full_refresh then
-		pcall(vim.api.nvim_buf_clear_namespace, results_buf, ns, 0, -1)
-	end
-
-	set_lines_chunked(results_buf, insert_at, insert_at, new_lines, function()
+	set_lines_chunked(results_buf, new_lines, function()
 		vim.bo[results_buf].modifiable = false
-		
-		-- Apply highlights in chunks to avoid blocking
-		local results_to_highlight = {}
-		for i = start_idx, #results do
-			results_to_highlight[#results_to_highlight + 1] = results[i]
-		end
-		M.apply_highlights_async(results_buf, new_lines, results_to_highlight, search_text, full_refresh and 0 or insert_at, ns, smart_case)
+		M.apply_highlights_async(results_buf, new_lines, results, search_text, 0, ns, smart_case)
 	end)
 end
 
@@ -127,10 +107,16 @@ function M.apply_highlights_async(results_buf, lines, results_data, search_text,
 	-- Collect all highlight positions
 	local function collect_highlights(line, line_idx, result)
 		-- highlight filename (before first colon)
-		local filename_end = line:find(":")
-		if not filename_end then
+		-- Parse the "<path>:<lnum>:<col>: " prefix. Matching the numeric
+		-- :lnum:col: suffix (rather than the first colon) keeps Windows drive
+		-- letters like C:\ as part of the path instead of splitting on them.
+		local path, lnum_str, col_str = line:match("^(.-):(%d+):(%d+): ")
+		if not path then
 			return
 		end
+		local filename_end = #path + 1 -- position of the colon after the path
+		local second_colon = filename_end + 1 + #lnum_str
+		local third_colon = second_colon + 1 + #col_str
 
 		table.insert(highlights, {
 			group = "Directory",
@@ -138,16 +124,6 @@ function M.apply_highlights_async(results_buf, lines, results_data, search_text,
 			col_start = 0,
 			col_end = filename_end - 1,
 		})
-
-		-- highlight line:col numbers
-		local second_colon = line:find(":", filename_end + 1)
-		if not second_colon then
-			return
-		end
-		local third_colon = line:find(":", second_colon + 1)
-		if not third_colon then
-			return
-		end
 
 		table.insert(highlights, {
 			group = "LineNr",

@@ -56,9 +56,19 @@ function M.run_ripgrep_async(search, opts, on_results, on_complete)
 	local cmd = {
 		"rg",
 		"--json", -- JSON output with match details
-		"--sort=path", -- Sort by filename for consistent ordering
 		"--max-filesize=" .. max_file_size,
 	}
+
+	-- Optional stable ordering. --sort forces ripgrep single-threaded, so allow
+	-- disabling it (false/"none") to regain parallelism on large trees at the
+	-- cost of deterministic result order. Defaults to "path".
+	local sort = opts.sort
+	if sort == nil then
+		sort = "path"
+	end
+	if sort and sort ~= "none" and sort ~= false then
+		cmd[#cmd + 1] = "--sort=" .. sort
+	end
 
 	if opts.smart_case ~= false then
 		cmd[#cmd + 1] = "--smart-case" -- Case-insensitive if pattern is lowercase
