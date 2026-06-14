@@ -254,9 +254,10 @@ local function replace_selected()
 
 	if #items_to_replace > 0 then
 		state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-		local summary = replacer.apply(items_to_replace, state.search_text, state.replace_text)
-		replacer.notify_summary(summary)
-		do_search()
+		replacer.apply(items_to_replace, state.search_text, state.replace_text, function(summary)
+			replacer.notify_summary(summary)
+			do_search()
+		end)
 	end
 end
 
@@ -282,9 +283,10 @@ local function replace_all()
 	end
 
 	state.replace_text = vim.api.nvim_buf_get_lines(state.replace_buf, 0, -1, false)[1] or ""
-	local summary = replacer.apply(state.results, state.search_text, state.replace_text)
-	replacer.notify_summary(summary)
-	M.close()
+	replacer.apply(state.results, state.search_text, state.replace_text, function(summary)
+		replacer.notify_summary(summary)
+		M.close()
+	end)
 end
 
 -- opens the selected result file at the matched location

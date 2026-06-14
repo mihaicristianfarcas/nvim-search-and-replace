@@ -6,6 +6,10 @@ local M = {}
 local history = {}
 local redo_stack = {}
 
+-- True while an async apply is in flight; blocks overlapping apply/undo/redo so
+-- history can't be mutated mid-operation.
+local applying = false
+
 -- History persistence configuration
 local HISTORY_FILE = vim.fn.stdpath("cache") .. "/nvim-search-and-replace-history.json"
 local MAX_HISTORY_ENTRIES = 50 -- Limit persisted history to prevent large files
@@ -96,25 +100,54 @@ local function read_file(filename)
 	return lines, eols
 end
 
--- Writes logical lines back as raw bytes, re-attaching each line's terminator.
--- @return ok (boolean), err (string|nil)
-local function write_file(filename, lines, eols)
+-- Joins logical lines with their terminators back into the raw file bytes.
+local function serialize(lines, eols)
 	local parts = {}
 	for i = 1, #lines do
 		parts[#parts + 1] = lines[i]
 		parts[#parts + 1] = eols[i] or "\n"
 	end
+	return table.concat(parts)
+end
 
+-- Synchronously writes logical lines back as raw bytes (used by undo/redo).
+-- @return ok (boolean), err (string|nil)
+local function write_file(filename, lines, eols)
 	local file, err = io.open(filename, "wb")
 	if not file then
 		return false, err or "cannot open for writing"
 	end
-	local ok, werr = file:write(table.concat(parts))
+	local ok, werr = file:write(serialize(lines, eols))
 	file:close()
 	if not ok then
 		return false, werr or "write failed"
 	end
 	return true
+end
+
+-- Asynchronously writes logical lines as raw bytes off the main thread (libuv).
+-- The callback is always invoked on the main loop via vim.schedule, so it is
+-- safe to call Neovim APIs from it. @param cb function(ok, err)
+local function write_file_async(filename, lines, eols, cb)
+	local data = serialize(lines, eols)
+	local function finish(ok, err)
+		vim.schedule(function()
+			cb(ok, err)
+		end)
+	end
+
+	-- "w" = O_WRONLY|O_CREAT|O_TRUNC; mode 0644 only applies when creating, so an
+	-- existing file keeps its permissions (matches the previous io.open behavior).
+	vim.loop.fs_open(filename, "w", 420, function(oerr, fd)
+		if oerr or not fd then
+			return finish(false, oerr or "cannot open for writing")
+		end
+		vim.loop.fs_write(fd, data, -1, function(werr)
+			vim.loop.fs_close(fd, function(cerr)
+				finish(not (werr or cerr), werr or cerr)
+			end)
+		end)
+	end)
 end
 
 -- Canonical absolute path with symlinks resolved, so a search-result path and an
@@ -264,23 +297,91 @@ function M.compute_region(region_lines, col, replace_text, match_text, match_len
 	return edit and edit.new or nil
 end
 
--- Applies replacements to files based on search results
--- Processes files from bottom to top to avoid line number shifts
--- Stores only changed lines in history for efficient undo/redo
+-- Computes and writes the replacements for a single file, then calls done().
+-- All preparation (unsaved check, read, edit computation) runs on the main
+-- thread; only the disk write is performed off-thread via write_file_async.
+local function apply_to_file(filename, file_entries, search, replace_text, summary, op_diffs, done)
+	-- Don't clobber a file the user is editing with unsaved changes
+	if has_unsaved_buffer(filename) then
+		table.insert(summary.skipped, filename .. ": buffer has unsaved changes (save or close it first)")
+		return done()
+	end
+
+	-- Sort bottom-to-top to avoid line number shifts during replacement
+	sort_descending(file_entries)
+
+	-- Read raw bytes, preserving line endings and trailing-newline state
+	local lines, eols = read_file(filename)
+	if not lines then
+		table.insert(summary.skipped, filename .. ": failed to read file")
+		return done()
+	end
+
+	-- Edits recorded in apply order (entries are sorted bottom-to-top, so this is
+	-- descending start line). Each edit captures the exact before/after line range,
+	-- which lets undo/redo replay or reverse it safely even when a multiline
+	-- replacement changes the file's line count.
+	local edits = {}
+	local file_applied = 0
+
+	for _, entry in ipairs(file_entries) do
+		local edit, err =
+			compute_edit(lines, entry.lnum, entry.col, entry.match_text, entry.match_len, replace_text)
+		if edit then
+			lines, eols = splice(lines, eols, edit.start, #edit.old, edit.new)
+			edits[#edits + 1] = edit
+			file_applied = file_applied + 1
+		else
+			table.insert(
+				summary.skipped,
+				string.format("%s:%d:%d mismatch (%s)", filename, entry.lnum, entry.col, err or "no match")
+			)
+		end
+	end
+
+	if file_applied == 0 then
+		return done()
+	end
+
+	write_file_async(filename, lines, eols, function(ok_write, err)
+		if ok_write then
+			summary.applied = summary.applied + file_applied
+			table.insert(summary.files, filename)
+			-- Store the ordered edits so undo/redo can validate and reverse them.
+			op_diffs[filename] = { edits = edits }
+		else
+			table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
+		end
+		done()
+	end)
+end
+
+-- Applies replacements to files based on search results.
+-- Files are processed one at a time with the disk writes performed asynchronously
+-- (off the main thread), so a large replacement never freezes the editor. Results
+-- are reported through the on_done callback once every file has been written.
 --
 -- @param entries: array of search results with match_text and match_len
 -- @param search: original search pattern (for error messages)
 -- @param replace_text: text to replace matches with
--- @return summary table with: applied (count), files (array), skipped (array)
-function M.apply(entries, search, replace_text)
+-- @param on_done: optional function(summary) called when the operation completes,
+--   with summary = { applied (count), files (array), skipped (array) } or nil
+function M.apply(entries, search, replace_text, on_done)
+	on_done = on_done or function() end
+
 	if not entries or #entries == 0 then
 		vim.notify("No entries to replace.", vim.log.levels.WARN)
-		return
+		return on_done(nil)
 	end
 
 	if not search or search == "" then
 		vim.notify("Search text is empty.", vim.log.levels.WARN)
-		return
+		return on_done(nil)
+	end
+
+	if applying then
+		vim.notify("A replacement is already in progress.", vim.log.levels.WARN)
+		return on_done(nil)
 	end
 
 	-- Group entries by file for efficient processing
@@ -296,83 +397,42 @@ function M.apply(entries, search, replace_text)
 	local summary = { applied = 0, files = {}, skipped = {} }
 	local op_diffs = {} -- Differential storage: only changed lines, not full files
 
-	-- Process files one at a time to avoid memory issues
 	local files_to_process = {}
 	for filename, _ in pairs(per_file) do
 		table.insert(files_to_process, filename)
 	end
 
-	for _, filename in ipairs(files_to_process) do
-		local file_entries = per_file[filename]
+	applying = true
 
-		-- Don't clobber a file the user is editing with unsaved changes
-		if has_unsaved_buffer(filename) then
-			table.insert(summary.skipped, filename .. ": buffer has unsaved changes (save or close it first)")
-			goto continue
+	local function finalize()
+		if summary.applied > 0 then
+			-- Add to history with differential storage (only changed lines)
+			table.insert(history, { diffs = op_diffs, search = search, replace = replace_text, timestamp = os.time() })
+			-- Clear redo stack when new operation is performed
+			redo_stack = {}
+			-- Persist history to disk
+			save_history()
+			-- Reload any open buffers that were modified to keep them in sync
+			vim.cmd("checktime")
 		end
-
-		-- Sort bottom-to-top to avoid line number shifts during replacement
-		sort_descending(file_entries)
-
-		-- Read raw bytes, preserving line endings and trailing-newline state
-		local lines, eols = read_file(filename)
-		if not lines then
-			table.insert(summary.skipped, filename .. ": failed to read file")
-			goto continue
-		end
-
-		-- Edits recorded in apply order (entries are sorted bottom-to-top, so this
-		-- is descending start line). Each edit captures the exact before/after
-		-- line range, which lets undo/redo replay or reverse it safely even when
-		-- a multiline replacement changes the file's line count.
-		local edits = {}
-		local file_applied = 0
-
-		for _, entry in ipairs(file_entries) do
-			local edit, err =
-				compute_edit(lines, entry.lnum, entry.col, entry.match_text, entry.match_len, replace_text)
-			if edit then
-				lines, eols = splice(lines, eols, edit.start, #edit.old, edit.new)
-				edits[#edits + 1] = edit
-				file_applied = file_applied + 1
-			else
-				table.insert(
-					summary.skipped,
-					string.format("%s:%d:%d mismatch (%s)", filename, entry.lnum, entry.col, err or "no match")
-				)
-			end
-		end
-
-		-- Write changes if any replacements succeeded
-		if file_applied > 0 then
-			local ok_write, err = write_file(filename, lines, eols)
-			if ok_write then
-				summary.applied = summary.applied + file_applied
-				table.insert(summary.files, filename)
-				-- Store the ordered edits so undo/redo can validate and reverse them.
-				op_diffs[filename] = { edits = edits }
-			else
-				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
-			end
-		end
-
-		::continue::
+		applying = false
+		on_done(summary)
 	end
 
-	if summary.applied > 0 then
-		-- Add to history with differential storage (only changed lines)
-		table.insert(history, { diffs = op_diffs, search = search, replace = replace_text, timestamp = os.time() })
-		-- Clear redo stack when new operation is performed
-		redo_stack = {}
-		-- Persist history to disk
-		save_history()
-		-- Reload any open buffers that were modified to keep them in sync
-		vim.schedule(function()
-			vim.cmd("checktime")
+	-- Drive the files sequentially; each step resumes on the main thread.
+	local idx = 0
+	local function step()
+		idx = idx + 1
+		if idx > #files_to_process then
+			return finalize()
+		end
+		local filename = files_to_process[idx]
+		apply_to_file(filename, per_file[filename], search, replace_text, summary, op_diffs, function()
+			vim.schedule(step)
 		end)
 	end
 
-	return summary
+	step()
 end
 
 -- Displays a notification summary of the replacement operation
@@ -533,6 +593,10 @@ end
 -- The operation moves to the redo stack unchanged; its stored before/after pair
 -- makes the reverse (redo) deterministic.
 function M.undo_last()
+	if applying then
+		vim.notify("A replacement is in progress; try again shortly.", vim.log.levels.WARN)
+		return
+	end
 	if #history == 0 then
 		vim.notify("No replace operations to undo.", vim.log.levels.INFO)
 		return
@@ -547,6 +611,10 @@ end
 -- Redoes the last undone replacement operation.
 -- Moves the operation from the redo stack back to history.
 function M.redo_last()
+	if applying then
+		vim.notify("A replacement is in progress; try again shortly.", vim.log.levels.WARN)
+		return
+	end
 	if #redo_stack == 0 then
 		vim.notify("No replace operations to redo.", vim.log.levels.INFO)
 		return
