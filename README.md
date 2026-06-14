@@ -183,7 +183,7 @@ The UI looks like this:
 
 - Multiline matches (across lines) are fully supported via the `multiline = true` option, including replacement and before/after preview
 - Files open in a buffer with unsaved changes are skipped during replacement (save or close them first)
-- Search and replacement writes are asynchronous (non-blocking); undo/redo writes are synchronous
+- Search and replacement are asynchronous (non-blocking): edit computation is chunked across event-loop ticks and disk writes run off-thread, so large replacements don't freeze the editor. Undo/redo writes are synchronous
 - Follows ripgrep's default ignore rules (respects `.gitignore`)
 - Search results limited by `max_results` config (default: 10,000)
 - Large files (>1MB) are automatically skipped to maintain performance

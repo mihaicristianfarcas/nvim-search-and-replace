@@ -297,9 +297,14 @@ function M.compute_region(region_lines, col, replace_text, match_text, match_len
 	return edit and edit.new or nil
 end
 
+-- Number of matches whose edits are computed per event-loop tick. Files with
+-- more matches than this have their computation spread across ticks so a single
+-- huge file can't block the UI either.
+local COMPUTE_CHUNK = 500
+
 -- Computes and writes the replacements for a single file, then calls done().
--- All preparation (unsaved check, read, edit computation) runs on the main
--- thread; only the disk write is performed off-thread via write_file_async.
+-- Edit computation runs on the main thread (Lua/vim APIs require it) but is
+-- chunked across ticks; only the disk write is performed off-thread.
 local function apply_to_file(filename, file_entries, search, replace_text, summary, op_diffs, done)
 	-- Don't clobber a file the user is editing with unsaved changes
 	if has_unsaved_buffer(filename) then
@@ -323,37 +328,54 @@ local function apply_to_file(filename, file_entries, search, replace_text, summa
 	-- replacement changes the file's line count.
 	local edits = {}
 	local file_applied = 0
+	local total = #file_entries
+	local idx = 0
 
-	for _, entry in ipairs(file_entries) do
-		local edit, err =
-			compute_edit(lines, entry.lnum, entry.col, entry.match_text, entry.match_len, replace_text)
-		if edit then
-			lines, eols = splice(lines, eols, edit.start, #edit.old, edit.new)
-			edits[#edits + 1] = edit
-			file_applied = file_applied + 1
+	-- Writes the accumulated edits (async) once all matches are computed.
+	local function flush()
+		if file_applied == 0 then
+			return done()
+		end
+		write_file_async(filename, lines, eols, function(ok_write, err)
+			if ok_write then
+				summary.applied = summary.applied + file_applied
+				table.insert(summary.files, filename)
+				-- Store the ordered edits so undo/redo can validate and reverse them.
+				op_diffs[filename] = { edits = edits }
+			else
+				table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
+			end
+			done()
+		end)
+	end
+
+	local function compute_chunk()
+		local stop = math.min(idx + COMPUTE_CHUNK, total)
+		while idx < stop do
+			idx = idx + 1
+			local entry = file_entries[idx]
+			local edit, err =
+				compute_edit(lines, entry.lnum, entry.col, entry.match_text, entry.match_len, replace_text)
+			if edit then
+				lines, eols = splice(lines, eols, edit.start, #edit.old, edit.new)
+				edits[#edits + 1] = edit
+				file_applied = file_applied + 1
+			else
+				table.insert(
+					summary.skipped,
+					string.format("%s:%d:%d mismatch (%s)", filename, entry.lnum, entry.col, err or "no match")
+				)
+			end
+		end
+
+		if idx < total then
+			vim.schedule(compute_chunk)
 		else
-			table.insert(
-				summary.skipped,
-				string.format("%s:%d:%d mismatch (%s)", filename, entry.lnum, entry.col, err or "no match")
-			)
+			flush()
 		end
 	end
 
-	if file_applied == 0 then
-		return done()
-	end
-
-	write_file_async(filename, lines, eols, function(ok_write, err)
-		if ok_write then
-			summary.applied = summary.applied + file_applied
-			table.insert(summary.files, filename)
-			-- Store the ordered edits so undo/redo can validate and reverse them.
-			op_diffs[filename] = { edits = edits }
-		else
-			table.insert(summary.skipped, string.format("%s: failed to write (%s)", filename, err))
-		end
-		done()
-	end)
+	compute_chunk()
 end
 
 -- Applies replacements to files based on search results.
