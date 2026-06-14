@@ -1,5 +1,8 @@
 local M = {}
 
+-- Plugin version (semver). Keep in sync with the latest git tag and CHANGELOG.
+M.version = "0.1.0"
+
 -- Default configuration
 local defaults = {
 	smart_case = true, -- Case insensitive unless uppercase is used

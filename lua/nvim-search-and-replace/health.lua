@@ -45,7 +45,7 @@ function M.check()
 	local ok, plugin = pcall(require, "nvim-search-and-replace")
 	if ok then
 		local config = plugin.get_config()
-		ok_fn("Plugin loaded successfully")
+		ok_fn("Plugin loaded successfully (version " .. tostring(plugin.version) .. ")")
 		info("Config: smart_case=" .. tostring(config.smart_case))
 		info("Config: max_results=" .. tostring(config.max_results))
 		info("Config: max_file_size=" .. tostring(config.max_file_size))
